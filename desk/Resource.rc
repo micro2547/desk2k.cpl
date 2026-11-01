@@ -9,6 +9,14 @@
 //
 #include "winres.h"
 
+// Resource-editor exports use the GDI font-weight constant in dialog templates.
+#ifndef FW_NORMAL
+#define FW_NORMAL 400
+#endif
+#ifndef FALSE
+#define FALSE 0
+#endif
+
 /////////////////////////////////////////////////////////////////////////////
 #undef APSTUDIO_READONLY_SYMBOLS
 
@@ -17,6 +25,9 @@
 
 #if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
 LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+
+// The SDK isolation-aware API wrappers use manifest resource 3 for a DLL.
+3 RT_MANIFEST "app.manifest"
 
 #ifdef APSTUDIO_INVOKED
 /////////////////////////////////////////////////////////////////////////////
@@ -50,8 +61,8 @@ END
 //
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 5,1,2600,5512
-PRODUCTVERSION 5,1,2600,5512
+FILEVERSION 5,0,0,0
+PRODUCTVERSION 5,0,0,0
 FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
 FILEFLAGS 0x1L
@@ -66,14 +77,12 @@ BEGIN
     BEGIN
         BLOCK "040904B0"
         BEGIN
-            VALUE "CompanyName", "Microsoft Corporation"
-            VALUE "FileDescription", "Desktop Control Panel"
-            VALUE "FileVersion", "5.1.2600.5512 (xpsp.080413-2105)"
-            VALUE "InternalName", "DESK"
-            VALUE "LegalCopyright", "\xA9 Microsoft Corporation. All rights reserved."
-            VALUE "OriginalFilename", "DESK.CPL"
-            VALUE "ProductName", "Microsoft\xAE Windows\xAE Operating System"
-            VALUE "ProductVersion", "5.1.2600.5512"
+            VALUE "FileDescription", "Windows 2000-style Display Control Panel"
+            VALUE "FileVersion", "5.0.0.0"
+            VALUE "InternalName", "deskn"
+            VALUE "OriginalFilename", "deskn.cpl"
+            VALUE "ProductName", "Classic Display Properties"
+            VALUE "ProductVersion", "5.0.0.0"
         END
     END
     BLOCK "VarFileInfo"
@@ -89,7 +98,8 @@ END
 
 // Icon with lowest ID value placed first to ensure application icon
 // remains consistent on all systems.
-IDI_ICON1               ICON                    "small.ico"
+IDI_ICON1               ICON                    "assets\\desk.ico"
+IDI_BACKGROUND_NONE     ICON                    "assets\\background-none.ico"
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -97,27 +107,17 @@ IDI_ICON1               ICON                    "small.ico"
 // Bitmap
 //
 
-IDB_BITMAP1             BITMAP                  "Bitmap1.bmp"
+IDB_BITMAP1             BITMAP                  "assets\\monitor.bmp"
 
-IDB_BITMAP2             BITMAP                  "Bitmap120.bmp"
+IDB_BITMAP2             BITMAP                  "assets\\energyst.bmp"
 
-IDB_4BIT                BITMAP                  "Bitmap4_bit.bmp"
-IDB_8BIT                BITMAP                  "Bitmap8_bit.bmp"
+IDB_4BIT                BITMAP                  "assets\\color4.bmp"
+IDB_8BIT                BITMAP                  "assets\\color8.bmp"
 IDB_16BIT               BITMAP                  "Bitmap16_bit.bmp"
 IDB_24BIT               BITMAP                  "Bitmap24_bit.bmp"
 IDB_32BIT               BITMAP                  "Bitmap32_bit.bmp"
 
 
-/////////////////////////////////////////////////////////////////////////////
-//
-// String Table
-//
-
-STRINGTABLE DISCARDABLE
-BEGIN
-    IDS_THEMESCPL           "Display"
-    IDS_THEMESDESC          "Change the appearance of your desktop, such as the background, screen saver, colors, font sizes, and screen resolution."
-END
 
 #include "Resource.en-US.rc"
 

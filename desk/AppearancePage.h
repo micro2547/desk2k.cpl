@@ -1,71 +1,43 @@
 #pragma once
 #include "pch.h"
-#include "wndprvw.h"
+#include "AppearanceDlgBox.h"
 
-#define READ_AT(TYPE, BIN, OFFSET) (*reinterpret_cast<TYPE*>((BIN) + (OFFSET)))
-#define READ_STRING(TYPE, BIN, OFFSET) (reinterpret_cast<TYPE*>((BIN)+ (OFFSET)))
-
-class CAppearanceDlgProc
-	: public WTL::CPropertyPageImpl<CAppearanceDlgProc>
+class CAppearanceDlgProc : public WTL::CPropertyPageImpl<CAppearanceDlgProc>
 {
 public:
-	enum {IDD = IDD_APPEARANCEDLG};
-
-private:
+	enum { IDD = IDD_APPEARANCEDLG };
 	BEGIN_MSG_MAP(CAppearanceDlgProc)
 		MESSAGE_HANDLER(WM_INITDIALOG, OnInitDialog)
 		MESSAGE_HANDLER(WM_DESTROY, OnDestroy)
-		COMMAND_HANDLER(1111, CBN_SELCHANGE, OnComboboxChange)
-		COMMAND_HANDLER(1114, CBN_SELCHANGE, OnClrComboboxChange)
-		COMMAND_HANDLER(1116, CBN_SELCHANGE, OnFontComboboxChange)
-		COMMAND_HANDLER(1117, BN_CLICKED, OnAdvanced)
-		COMMAND_HANDLER(1118, BN_CLICKED, OnEffects)
+		COMMAND_HANDLER(1114, CBN_SELCHANGE, OnScheme)
+		COMMAND_HANDLER(1117, BN_CLICKED, OnSave)
+		COMMAND_HANDLER(1118, BN_CLICKED, OnDelete)
+		COMMAND_RANGE_HANDLER(1126, 1141, OnEditor)
 		CHAIN_MSG_MAP(WTL::CPropertyPageImpl<CAppearanceDlgProc>)
 	END_MSG_MAP()
+	int OnSetActive();
+	int OnApply();
+	void OnReset();
 
-	BOOL OnInitDialog(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);
-	BOOL OnDestroy(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);
-	BOOL OnAdvanced(UINT code, UINT id, HWND hWnd, BOOL& bHandled);
-	BOOL OnEffects(UINT code, UINT id, HWND hWnd, BOOL& bHandled);
-	BOOL OnComboboxChange(UINT code, UINT id, HWND hWnd, BOOL& bHandled);
-	BOOL OnClrComboboxChange(UINT code, UINT id, HWND hWnd, BOOL& bHandled);
-	BOOL OnFontComboboxChange(UINT code, UINT id, HWND hWnd, BOOL& bHandled);
-	BOOL OnSetActive();
-	BOOL OnApply();
-
-	void FillSchemeDataMap(LPCWSTR theme, int index);
-	void _UpdateColorBox(LPWSTR data);
-	void _UpdateFontBox(LPWSTR data);
-	void _FixColorBox();
-	int _FindCurrentIndex();
-	void _FilterHiddenThemes();
-
-
-	HWND hThemesCombobox;
-	HWND hColorCombobox;
-	HWND hSizeCombobox;
-	HWND hPreviewWnd;
-	SIZE size;
-	std::vector<LPWSTR> msstyle;
-	Microsoft::WRL::ComPtr<IWindowPreview> pWndPreview;
-	SCHEMEDATA* schemeMap = NULL;
-	ULONG mapSize;
-
-	// -ve sizes are fixed with preview size in wndprvw
-	MYWINDOWINFO wnd[3] =
-	{
-		{
-			WT_INACTIVE,
-			{10, 10, -37, 10 + 134}
-		},
-		{
-			WT_ACTIVE,
-			{20, 35, -30, 35 + 134}
-		},
-		{
-			WT_MESSAGEBOX,
-			{-75, 64, 75, 64 + 98}
-		}
-	};
-
+private:
+	LRESULT OnInitDialog(UINT, WPARAM, LPARAM, BOOL&);
+	LRESULT OnDestroy(UINT, WPARAM, LPARAM, BOOL&);
+	LRESULT OnScheme(WORD, WORD, HWND, BOOL&);
+	LRESULT OnSave(WORD, WORD, HWND, BOOL&);
+	LRESULT OnDelete(WORD, WORD, HWND, BOOL&);
+	LRESULT OnEditor(WORD, WORD, HWND, BOOL&);
+	void Error(UINT operation, DWORD error);
+	void PopulateSchemes();
+	void SelectSchemeName();
+	void Modified();
+	CAppearanceDlgBox editor;
+	SCHEMEDATA scheme = {};
+	std::wstring schemeName;
+	std::wstring lastName;
+	std::vector<std::wstring> registryNames;
+	COLORREF appliedDesktopColor = 0;
+	ICONMETRICSW appliedIconMetrics = {sizeof(ICONMETRICSW)};
+	int appliedIconSize = 32;
+	bool initialized = false;
+	bool dirty = false;
 };

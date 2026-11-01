@@ -30,12 +30,14 @@ CWindowPreview::CWindowPreview(SIZE const& sizePreview, MYWINDOWINFO* pwndInfo, 
 	_sizePreview = sizePreview;
 	_pageType = pageType;
 	_hTheme = hTheme;
-	_fIsThemed = !IsClassicThemeEnabled();
+	_fIsThemed = pageType != PT_APPEARANCE && !IsClassicThemeEnabled();
 	_dpiWindow = dpi;
 
 	// always initialize variables
 	_marFrame = {};
 	_iCurrentWnd = 0;
+	_hWndTheme = nullptr;
+	_hScrlTheme = nullptr;
 	_bmpBin = nullptr;
 	_bmpSolidColor = nullptr;
 	_bmpWallpaper = nullptr;
@@ -45,7 +47,7 @@ CWindowPreview::CWindowPreview(SIZE const& sizePreview, MYWINDOWINFO* pwndInfo, 
 	{
 		_bmpWindows[i] = nullptr;
 	}
-	_fForceClassic = FALSE;
+	_fForceClassic = pageType == PT_APPEARANCE;
 
 	cs_dpi = dpi;
 	_rcBounds = (RECT*)calloc(13, sizeof(RECT));
@@ -71,6 +73,13 @@ CWindowPreview::~CWindowPreview()
 		}
 		free(_bmpWindows);
 	}
+	if (_parrBounds)
+	{
+		for (int i = 0; i < _wndInfoCount; ++i) free(_parrBounds[i]);
+		free(_parrBounds);
+	}
+	free(_arrMargins);
+	free(_rcBounds);
 
 	if (_hTheme)
 	{
@@ -86,8 +95,11 @@ HRESULT CWindowPreview::GetPreviewImage(HBITMAP* pbOut)
 	HRESULT hr = S_OK;
 	if (_fForceClassic) _fIsThemed = 0;
 
-	_hWndTheme = OpenNcThemeData(_hTheme, L"Window");
-	_hScrlTheme = OpenNcThemeData(_hTheme, L"Scrollbar");
+	if (_fIsThemed)
+	{
+		_hWndTheme = OpenNcThemeData(_hTheme, L"Window");
+		_hScrlTheme = OpenNcThemeData(_hTheme, L"Scrollbar");
+	}
 	_CalculateRectsOfElements();
 
 	if (_pageType != PT_SCRSAVER)
@@ -113,24 +125,22 @@ HRESULT CWindowPreview::GetPreviewImage(HBITMAP* pbOut)
 	{
 		for (int i = 0; i < _wndInfoCount; ++i)
 		{
-			// adjust size for dpi
-			_pwndInfo[i].wndPos = { 
-				.left = ADJUSTDPI(_pwndInfo[i].wndPos.left),
-				.top = ADJUSTDPI(_pwndInfo[i].wndPos.top),
-				.right = ADJUSTDPI(_pwndInfo[i].wndPos.right),
-				.bottom = ADJUSTDPI(_pwndInfo[i].wndPos.bottom)
-			};
-
-			// fix window sizes which are based on preview size
-			if (_pwndInfo[i].wndPos.right < 0)
+			if (_pageType != PT_APPEARANCE)
 			{
-				_pwndInfo[i].wndPos.right = _sizePreview.cx + _pwndInfo[i].wndPos.right + _pwndInfo[i].wndPos.left;
-			}
-
-			if (_pwndInfo[i].wndPos.left < 0)
-			{
-				_pwndInfo[i].wndPos.left = (_sizePreview.cx / 2) + _pwndInfo[i].wndPos.left;
-				_pwndInfo[i].wndPos.right = (_sizePreview.cx / 2) + _pwndInfo[i].wndPos.right;
+				// Other preview pages supply their window positions in 96-DPI units.
+				_pwndInfo[i].wndPos = {
+					.left = ADJUSTDPI(_pwndInfo[i].wndPos.left),
+					.top = ADJUSTDPI(_pwndInfo[i].wndPos.top),
+					.right = ADJUSTDPI(_pwndInfo[i].wndPos.right),
+					.bottom = ADJUSTDPI(_pwndInfo[i].wndPos.bottom)
+				};
+				if (_pwndInfo[i].wndPos.right < 0)
+					_pwndInfo[i].wndPos.right = _sizePreview.cx + _pwndInfo[i].wndPos.right + _pwndInfo[i].wndPos.left;
+				if (_pwndInfo[i].wndPos.left < 0)
+				{
+					_pwndInfo[i].wndPos.left = (_sizePreview.cx / 2) + _pwndInfo[i].wndPos.left;
+					_pwndInfo[i].wndPos.right = (_sizePreview.cx / 2) + _pwndInfo[i].wndPos.right;
+				}
 			}
 
 			hr = _RenderWindow(_pwndInfo[i], i);
@@ -156,8 +166,8 @@ HRESULT CWindowPreview::GetUpdatedPreviewImage(MYWINDOWINFO* pwndInfo, LPVOID hT
 
 	CloseThemeData(_hWndTheme);
 	CloseThemeData(_hScrlTheme);
-	_hWndTheme = OpenNcThemeData(_hTheme, L"Window");
-	_hScrlTheme = OpenNcThemeData(_hTheme, L"Scrollbar");
+	_hWndTheme = _fIsThemed ? OpenNcThemeData(_hTheme, L"Window") : nullptr;
+	_hScrlTheme = _fIsThemed ? OpenNcThemeData(_hTheme, L"Scrollbar") : nullptr;
 	_CalculateRectsOfElements();
 
 	if (flags & UPDATE_SOLIDCLR) _RenderSolidColor();
@@ -249,23 +259,6 @@ HRESULT CWindowPreview::_ComposePreview(HBITMAP* pbOut)
 	{
 		rect = { _pwndInfo[i].wndPos.left, _pwndInfo[i].wndPos.top, RECTWIDTH(_pwndInfo[i].wndPos), RECTHEIGHT(_pwndInfo[i].wndPos) };
 
-		if (_pageType == PT_APPEARANCE && !_fIsThemed)
-		{
-			if (_pwndInfo[i].wndType == WT_ACTIVE)
-			{
-				rect.X = _pwndInfo[0].wndPos.left + NcGetSystemMetrics(SM_CXPADDEDBORDER) + NcGetSystemMetrics(SM_CXBORDER) + 3;
-				rect.Y = _pwndInfo[0].wndPos.top + _marFrame.cyTopHeight + NcGetSystemMetrics(SM_CXBORDER) + NcGetSystemMetrics(SM_CXPADDEDBORDER) + 3;
-				rect.Width += 12;
-				rect.Height -= 5;
-			}
-			if (_pwndInfo[i].wndType == WT_MESSAGEBOX)
-			{
-				rect.X = 22 + NcGetSystemMetrics(SM_CXBORDER) + NcGetSystemMetrics(SM_CXPADDEDBORDER);
-				rect.Y += 19 + 35;
-				rect.Width += 75;
-				rect.Height -= 31;
-			}
-		}
 
 		_arrMargins[i] = {
 			.left = rect.X,
@@ -327,21 +320,6 @@ HRESULT CWindowPreview::_RenderWindow(MYWINDOWINFO wndInfo, int index)
 	HRESULT hr = S_OK;
 	_iCurrentWnd = index;
 
-	// my bad
-	// separate this
-	if (_pageType == PT_APPEARANCE && !_fIsThemed)
-	{
-		if (wndInfo.wndType == WT_ACTIVE)
-		{
-			wndInfo.wndPos.right += 12;
-			wndInfo.wndPos.bottom -= 5;
-		}
-		if (wndInfo.wndType == WT_MESSAGEBOX)
-		{
-			wndInfo.wndPos.bottom -= 31;
-			wndInfo.wndPos.right += 75;
-		}
-	}
 
 	// remove top and left values
 	// we add them back while composing
@@ -356,6 +334,8 @@ HRESULT CWindowPreview::_RenderWindow(MYWINDOWINFO wndInfo, int index)
 	FreeBitmap(&_bmpWindows[index]);
 	_bmpWindows[index] = new Bitmap(RECTWIDTH(wndInfo.wndPos), RECTHEIGHT(wndInfo.wndPos));
 	Graphics* graphics = Gdiplus::Graphics::FromImage(_bmpWindows[index]);
+	if (!_fIsThemed)
+		graphics->Clear(Color(SPLIT_COLORREF(NcGetSysColor(COLOR_3DFACE))));
 
 	hr = _RenderFrame(graphics, _hWndTheme, wndInfo);
 	RETURN_IF_FAILED(hr);
@@ -491,6 +471,34 @@ HRESULT CWindowPreview::_CalculateRectsOfElements()
 		_sizePreview.cy
 	};
 
+	if (_pageType == PT_APPEARANCE && _wndInfoCount == 3)
+	{
+		// Windows 2000 lookprev.c: LookPrev_Recalc. Recalculate from the
+		// current scheme metrics, not fixed window sizes or prior rectangles.
+		const int border = ADJUSTDPI(1);
+		const int edge = NcGetSystemMetrics(SM_CXEDGE);
+		const int frame = NcGetSystemMetrics(SM_CXBORDER) + border + edge;
+		const int caption = NcGetSystemMetrics(SM_CYSIZE);
+		RECT inactive = { 8 * border, 8 * border,
+			_sizePreview.cx - 8 * border, _sizePreview.cy - 8 * border - frame - caption };
+		RECT active = inactive;
+		OffsetRect(&active, frame, frame + caption + border);
+		active.bottom -= caption;
+		inactive.right -= caption;
+		RECT client = active;
+		InflateRect(&client, -frame, -frame);
+		client.top += caption + border + NcGetSystemMetrics(SM_CYMENUSIZE);
+		RECT message = {
+			client.left + 2 * edge,
+			client.top + RECTHEIGHT(client) / 2,
+			client.left + RECTWIDTH(client) / 2 + 3 * caption,
+			_sizePreview.cy - 2 * edge
+		};
+		_pwndInfo[0] = { WT_INACTIVE, inactive };
+		_pwndInfo[1] = { WT_ACTIVE, active };
+		_pwndInfo[2] = { WT_MESSAGEBOX, message };
+	}
+
 	// monitor
 	int xOff = (_sizePreview.cx / 2) - (_bmpMonitor->GetWidth() / 2);
 	int yOff = (_sizePreview.cy / 2) - (_bmpMonitor->GetHeight() / 2);
@@ -593,7 +601,7 @@ HRESULT CWindowPreview::_CalculateWindowRects()
 	int cyEdge = NcGetSystemMetrics(SM_CYEDGE);
 
 	SIZE size = { 0 };
-	GetThemePartSize(_hWndTheme, NULL, WP_CLOSEBUTTON, CBS_NORMAL, NULL, TS_TRUE, &size);
+	if (_fIsThemed) GetThemePartSize(_hWndTheme, NULL, WP_CLOSEBUTTON, CBS_NORMAL, NULL, TS_TRUE, &size);
 
 	int cyBtn = NcGetSystemMetrics(SM_CYSIZE);
 	int cxBtn = _fIsThemed ? MulDiv(cyBtn, size.cx, size.cy) : NcGetSystemMetrics(SM_CYSIZE);
@@ -695,7 +703,7 @@ HRESULT CWindowPreview::_CalculateWindowRects()
 
 	// scroll bar
 	_rcBounds[9] = _rcBounds[6];
-	GetThemePartSize(_hScrlTheme, NULL, SBP_ARROWBTN, ABS_UPNORMAL, NULL, TS_TRUE, &_sizeScrollbar);
+	if (_fIsThemed) GetThemePartSize(_hScrlTheme, NULL, SBP_ARROWBTN, ABS_UPNORMAL, NULL, TS_TRUE, &_sizeScrollbar);
 	int width = _fIsThemed ? max(NcGetSystemMetrics(SM_CXVSCROLL), _sizeScrollbar.cx) : NcGetSystemMetrics(SM_CXVSCROLL);
 	_rcBounds[9].left = _rcBounds[9].right - width;
 
@@ -716,7 +724,7 @@ HRESULT CWindowPreview::_CalculateWindowRects()
 	_rcBounds[12] = _rcBounds[11];
 	OffsetRect(&_rcBounds[12], _rcMargin.right - _marFrame.cxLeftWidth, 0);
 
-	_parrBounds[_iCurrentWnd] = (RECT*)malloc(13 * sizeof(RECT));
+	if (!_parrBounds[_iCurrentWnd]) _parrBounds[_iCurrentWnd] = (RECT*)malloc(13 * sizeof(RECT));
 	memcpy(_parrBounds[_iCurrentWnd], _rcBounds, 13 * sizeof(RECT));
 	return S_OK;
 }
@@ -908,7 +916,7 @@ HRESULT CWindowPreview::_RenderCaptionText(HDC hdc, MYWINDOWINFO wndInfo)
 
 	int id = 1449 + (int)wndInfo.wndType;
 	WCHAR szText[20];
-	LoadString(g_hThemeUI, id, szText, ARRAYSIZE(szText));
+	LoadString(g_hinst, id, szText, ARRAYSIZE(szText));
 
 	// get height
 	RECT rcheight = { 0 };
@@ -1074,15 +1082,13 @@ HRESULT CWindowPreview::_RenderContent(Graphics* pGraphics, HTHEME hTheme, MYWIN
 		}
 	}
 
-	// idk how it works but u cant use gdi+ to draw a rect, and then use gdi to draw the text on it
-	// QUIRK: same behaviour as old desk.cpl
-	if (_fIsThemed || (wndInfo.wndType != WT_INACTIVE && !_fIsThemed))
+	// Every sample window has an opaque client, including the inactive one.
+	// The inactive sample uses the 3-D face behind the overlapping active window.
 	{
-		COLORREF clr = NcGetSysColor(fIsMessageBox ? COLOR_3DFACE : COLOR_WINDOW);
-
-		HBRUSH hbr = CreateSolidBrush(clr);
-		FillRect(hdc, &_rcBounds[6], hbr);
-		DeleteObject(hbr);
+		HBRUSH brush = NcGetSysColorBrush(
+			fIsMessageBox || wndInfo.wndType == WT_INACTIVE ? COLOR_3DFACE : COLOR_WINDOW);
+		FillRect(hdc, &_rcBounds[6], brush);
+		if (selectedTheme->selectedScheme) DeleteObject(brush);
 	}
 
 	LOGFONT font{};
@@ -1112,7 +1118,7 @@ HRESULT CWindowPreview::_RenderContent(Graphics* pGraphics, HTHEME hTheme, MYWIN
 		HFONT hOldFont = (HFONT)SelectObject(hdc, fon);
 
 		WCHAR szText[20];
-		LoadString(g_hThemeUI, 1460, szText, ARRAYSIZE(szText));
+		LoadString(g_hinst, 1460, szText, ARRAYSIZE(szText));
 
 		RECT crc = _rcBounds[6];
 
@@ -1140,6 +1146,21 @@ HRESULT CWindowPreview::_RenderContent(Graphics* pGraphics, HTHEME hTheme, MYWIN
 	{
 		HFONT fon = CreateFontIndirect(&font);
 		HFONT hOldFont = (HFONT)SelectObject(hdc, fon);
+		if (_pageType == PT_APPEARANCE && !_fIsThemed)
+		{
+			TEXTMETRICW metrics = {};
+			if (GetTextMetricsW(hdc, &metrics))
+			{
+				const int border = ADJUSTDPI(1);
+				const int height = metrics.tmHeight + 8 * border;
+				const int center = (_rcBounds[6].left + _rcBounds[6].right) / 2;
+				_rcBounds[7].bottom = wndInfo.wndPos.bottom - 4 * border - NcGetSystemMetrics(SM_CYEDGE);
+				_rcBounds[7].top = _rcBounds[7].bottom - height;
+				_rcBounds[7].left = center - 3 * height / 2;
+				_rcBounds[7].right = _rcBounds[7].left + 3 * height;
+				_parrBounds[_iCurrentWnd][7] = _rcBounds[7];
+			}
+		}
 
 		// load button theme
 		if (_fIsThemed)
@@ -1154,7 +1175,7 @@ HRESULT CWindowPreview::_RenderContent(Graphics* pGraphics, HTHEME hTheme, MYWIN
 			SetTextColor(hdc, clr);
 
 			WCHAR szText[20];
-			LoadString(g_hThemeUI, 1461, szText, ARRAYSIZE(szText));
+			LoadString(g_hinst, 1461, szText, ARRAYSIZE(szText));
 
 			RECT crc = _rcBounds[6];
 			crc.left += NcGetSystemMetrics(SM_CXEDGE) + 1;
@@ -1167,7 +1188,7 @@ HRESULT CWindowPreview::_RenderContent(Graphics* pGraphics, HTHEME hTheme, MYWIN
 		SetTextColor(hdc, clr);
 
 		WCHAR szText[5];
-		LoadString(g_hThemeUI, 1458, szText, ARRAYSIZE(szText));
+		LoadString(g_hinst, 1458, szText, ARRAYSIZE(szText));
 		DrawText(hdc, szText, -1, &_rcBounds[7], DT_CENTER | DT_TOP | DT_SINGLELINE | DT_VCENTER);
 
 		SelectObject(hdc, hOldFont);
@@ -1202,7 +1223,7 @@ HRESULT CWindowPreview::_RenderMenuItem(HDC hdc, RECT* rc, int type)
 	int id = 1454 + (type - 1);
 
 	WCHAR szText[20];
-	LoadString(g_hThemeUI, id, szText, ARRAYSIZE(szText));
+	LoadString(g_hinst, id, szText, ARRAYSIZE(szText));
 
 	LOGFONT lf;
 	if (selectedTheme->selectedScheme)
@@ -1224,8 +1245,15 @@ HRESULT CWindowPreview::_RenderMenuItem(HDC hdc, RECT* rc, int type)
 	RECT rcheight = { 0,0,0,0 };
 	DrawText(hdc, szText, -1, &rcheight, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_CALCRECT);
 
-	// 7 padding on either side of the text
-	rc->right = rc->left + RECTWIDTH(rcheight) + (7 * 2);
+	int padding = ADJUSTDPI(14);
+	if (_pageType == PT_APPEARANCE)
+	{
+		static const WCHAR alphabet[] = L"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+		SIZE extent = {};
+		GetTextExtentPoint32W(hdc, alphabet, ARRAYSIZE(alphabet) - 1, &extent);
+		padding = 2 * (extent.cx / (ARRAYSIZE(alphabet) - 1));
+	}
+	rc->right = rc->left + RECTWIDTH(rcheight) + padding;
 	if (type == 3) DrawEdge(hdc, rc, BDR_SUNKENOUTER, BF_RECT);
 
 	if (type == 2 || type == 3)

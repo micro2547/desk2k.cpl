@@ -37,27 +37,27 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v145</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v145</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release-Vista|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v145</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v145</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
     <DisableAdvancedSupport>false</DisableAdvancedSupport>
     <SupportLTL>false</SupportLTL>
@@ -66,7 +66,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v145</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
     <DisableAdvancedSupport>false</DisableAdvancedSupport>
@@ -76,7 +76,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release-Vista|x64'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v145</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
     <DisableAdvancedSupport>false</DisableAdvancedSupport>
@@ -297,18 +297,17 @@
     <ClInclude Include="DeskIcons.h" />
     <ClInclude Include="EffectsDlg.h" />
     <ClInclude Include="desk.h" />
-    <ClInclude Include="fms.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="helper.h" />
     <ClInclude Include="ScreensaverPage.h" />
     <ClInclude Include="SettingsPage.h" />
+    <ClInclude Include="MonitorLayout.h" />
+    <ClInclude Include="MonitorArrangement.h" />
     <ClInclude Include="theme.h" />
     <ClInclude Include="ThemeChngDlg.h" />
-    <ClInclude Include="ThemesPage.h" />
-    <ClInclude Include="thmfile.h" />
-    <ClInclude Include="todo.h" />
+    <ClInclude Include="WebPage.h" />
     <ClInclude Include="uxtheme.h" />
     <ClInclude Include="version.h" />
   </ItemGroup>
@@ -321,7 +320,6 @@
     <ClCompile Include="EffectsDlg.cpp" />
     <ClCompile Include="desk.cpp" />
     <ClCompile Include="dllmain.cpp" />
-    <ClCompile Include="fms.cpp" />
     <ClCompile Include="helper.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
@@ -333,9 +331,9 @@
     </ClCompile>
     <ClCompile Include="ScreensaverPage.cpp" />
     <ClCompile Include="SettingsPage.cpp" />
+    <ClCompile Include="MonitorArrangement.cpp" />
     <ClCompile Include="ThemeChngDlg.cpp" />
-    <ClCompile Include="ThemesPage.cpp" />
-    <ClCompile Include="thmfile.cpp" />
+    <ClCompile Include="WebPage.cpp" />
     <ClCompile Include="uxtheme.cpp" />
     <ClCompile Include="version.cpp" />
     <ClCompile Include="wndprvw.cpp" />
@@ -370,9 +368,9 @@
     <Manifest Include="app.manifest" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="Bitmap1.bmp" />
-    <Image Include="Bitmap120.bmp" />
-    <Image Include="small.ico" />
+    <Image Include="assets\monitor.bmp" />
+    <Image Include="assets\energyst.bmp" />
+    <Image Include="assets\desk.ico" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

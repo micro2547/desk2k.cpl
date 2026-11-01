@@ -2,344 +2,414 @@
 #include "ScreensaverPage.h"
 #include "desk.h"
 #include "helper.h"
-#include "wndprvw.h"
 
-using namespace Microsoft::WRL::Details;
-LRESULT CALLBACK StaticProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-
-BOOL CScrSaverDlgProc::OnInitDialog(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
+namespace
 {
-	hScrPreview = GetDlgItem(1302);
-	hEnergy = GetDlgItem(1305);
-	hScrCombo = GetDlgItem(1300);
-	hBtnSettings = GetDlgItem(1303);
-	hBtnPreview = GetDlgItem(1304);
-	updown = GetDlgItem(1307);
-	secureCheck = GetDlgItem(1320);
+	constexpr LPCWSTR DesktopKey = L"Control Panel\\Desktop";
 
-	scrSize = GetClientSIZE(hScrPreview);
-	energySize = GetClientSIZE(hEnergy);
-
-	HBITMAP bmp;
-	pWndPreview = Make<CWindowPreview>(scrSize, nullptr, 0, PAGETYPE::PT_SCRSAVER, nullptr, GetDpiForWindow(m_hWnd));
-	pWndPreview->GetPreviewImage(&bmp);
-	SetBitmap(hScrPreview, bmp);
-
-	bmp = MonitorAsBmp(GETSIZE(energySize), IDB_BITMAP2, RGB(255, 204, 204));
-	SetBitmap(hEnergy, bmp);
-
-
-	WCHAR szText[20];
-	LoadString(g_hThemeUI, 2022, szText, ARRAYSIZE(szText));
-
-	ComboBox_AddString(hScrCombo, szText);
-	AddScreenSavers(hScrCombo);
-
-	WCHAR path[MAX_PATH];
-	DWORD size = sizeof(path);
-	LRESULT status = RegGetValue(HKEY_CURRENT_USER, L"Control Panel\\Desktop", L"SCRNSAVE.EXE", RRF_RT_REG_SZ, NULL, &path, &size);
-	if (status == ERROR_SUCCESS)
+	BOOL CALLBACK ClosePreviewWindow(HWND window, LPARAM)
 	{
-		selectedScrSaver = path;
+		PostMessage(window, WM_CLOSE, 0, 0);
+		return TRUE;
+	}
 
-		HMODULE hScr = LoadLibraryEx(selectedScrSaver.c_str(), NULL, LOAD_LIBRARY_AS_DATAFILE);
-		if (hScr)
+	void CloseProcess(PROCESS_INFORMATION& process)
+	{
+		if (process.hThread) CloseHandle(process.hThread);
+		if (process.hProcess) CloseHandle(process.hProcess);
+		process = {};
+	}
+}
+
+LRESULT CScrSaverDlgProc::OnInitDialog(UINT, WPARAM, LPARAM, BOOL&)
+{
+	CreateMonitor();
+	_energyBitmap = reinterpret_cast<HBITMAP>(LoadImage(g_hinst, MAKEINTRESOURCE(IDB_BITMAP2),
+		IMAGE_BITMAP, 0, 0, LR_LOADMAP3DCOLORS));
+	Static_SetBitmap(GetDlgItem(1305), _energyBitmap);
+	SendDlgItemMessage(1307, UDM_SETBUDDY, reinterpret_cast<WPARAM>(GetDlgItem(1306).m_hWnd));
+	SendDlgItemMessage(1307, UDM_SETRANGE32, 1, 9999);
+	SendDlgItemMessage(1306, EM_LIMITTEXT, 4);
+
+	WCHAR directory[MAX_PATH] = {};
+	GetSystemDirectory(directory, ARRAYSIZE(directory));
+	EnumerateDirectory(directory);
+	GetWindowsDirectory(directory, ARRAYSIZE(directory));
+	EnumerateDirectory(directory);
+
+	WCHAR stored[32768] = {};
+	DWORD bytes = sizeof(stored);
+	std::wstring configured;
+	if (RegGetValue(HKEY_CURRENT_USER, DesktopKey, L"SCRNSAVE.EXE",
+		RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ, nullptr, stored, &bytes) == ERROR_SUCCESS)
+	{
+		PathUnquoteSpaces(stored);
+		WCHAR resolved[32768] = {};
+		if (PathIsRelative(stored))
 		{
-			WCHAR name[MAX_PATH];
-			
-			if (!LoadString(hScr, 1, name, MAX_PATH))
-			{
-				LoadString(hScr, 100, name, MAX_PATH);
-			}
-			ComboBox_SetCurSel(hScrCombo, ComboBox_FindString(hScrCombo, 0, name));
-			FreeLibrary(hScr);
+			// Resolve old filename-only registrations against the Windows system directory.
+			GetSystemDirectory(directory, ARRAYSIZE(directory));
+			StringCchPrintf(resolved, ARRAYSIZE(resolved), L"%s\\%s", directory, stored);
 		}
+		else StringCchCopy(resolved, ARRAYSIZE(resolved), stored);
+		configured = resolved;
+		AddSaver(configured);
 	}
-	else
-	{
-		selectedScrSaver = L"";
-		ComboBox_SetCurSel(hScrCombo, 0);
-		::EnableWindow(hBtnPreview, FALSE);
-		::EnableWindow(hBtnSettings, FALSE);
-		::EnableWindow(updown, FALSE);
-		::EnableWindow((HWND)SendMessage(updown, UDM_GETBUDDY, 0, 0), FALSE);
-		::EnableWindow(secureCheck, FALSE);
-		::EnableWindow(GetDlgItem(1316), FALSE);
-		::EnableWindow(GetDlgItem(1322), FALSE);
-	}
-	ScreenPreview(hScrPreview);
-
-	int timeout;
+	std::sort(_savers.begin(), _savers.end(), [](const Saver& a, const Saver& b)
+		{ return lstrcmpi(a.name.c_str(), b.name.c_str()) < 0; });
+	WCHAR none[128] = {};
+	LoadString(g_hinst, 2022, none, ARRAYSIZE(none));
+	int noneItem = ComboBox_AddString(GetDlgItem(1300), none);
+	ComboBox_SetItemData(GetDlgItem(1300), noneItem, 0);
+	BOOL active = FALSE, secure = FALSE;
+	int timeout = 900;
+	SystemParametersInfo(SPI_GETSCREENSAVEACTIVE, 0, &active, 0);
+	SystemParametersInfo(SPI_GETSCREENSAVESECURE, 0, &secure, 0);
 	SystemParametersInfo(SPI_GETSCREENSAVETIMEOUT, 0, &timeout, 0);
-	SendMessage(updown, UDM_SETPOS32, 0, timeout / 60);
-
-	BOOL isSecure;
-	SystemParametersInfo(SPI_GETSCREENSAVESECURE, 0, &isSecure, 0);
-	Button_SetCheck(secureCheck, isSecure);
-	return 0;
-}
-
-BOOL CScrSaverDlgProc::OnDestroy(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
-{
-	pWndPreview = nullptr;
-	return 0;
-}
-
-BOOL CScrSaverDlgProc::OnScreenSaverComboboxChange(UINT code, UINT id, HWND hWnd, BOOL& bHandled)
-{
-	_TerminateProcess(pi);
-	int index = ComboBox_GetCurSel(hScrCombo);
-	int leng = ComboBox_GetLBTextLen(hScrCombo, index);
-	WCHAR* name = (WCHAR*)malloc((leng + 1) * sizeof(WCHAR));
-	ComboBox_GetLBText(hScrCombo, index, name);
-
-	if (index == 0)
+	int selected = noneItem;
+	for (size_t i = 0; i < _savers.size(); ++i)
 	{
-		selectedScrSaver = L"";
-		::EnableWindow(hBtnPreview, FALSE);
-		::EnableWindow(hBtnSettings, FALSE);
-		::EnableWindow(updown, FALSE);
-		::EnableWindow((HWND)SendMessage(updown, UDM_GETBUDDY, 0, 0), FALSE);
-		::EnableWindow(secureCheck, FALSE);
-		::EnableWindow(GetDlgItem(1316), FALSE);
-		::EnableWindow(GetDlgItem(1322), FALSE);
+		int item = ComboBox_AddString(GetDlgItem(1300), _savers[i].name.c_str());
+		ComboBox_SetItemData(GetDlgItem(1300), item, i + 1);
+		if (active && lstrcmpi(_savers[i].path.c_str(), configured.c_str()) == 0) selected = item;
 	}
-	else
+	ComboBox_SetCurSel(GetDlgItem(1300), selected);
+	SendDlgItemMessage(1307, UDM_SETPOS32, 0, (std::max)(1, (std::min)(9999, (timeout + 59) / 60)));
+	CheckDlgButton(1320, secure ? BST_CHECKED : BST_UNCHECKED);
+	_initializing = false;
+	UpdateControls();
+	return TRUE;
+}
+
+void CScrSaverDlgProc::EnumerateDirectory(LPCWSTR directory)
+{
+	WCHAR pattern[MAX_PATH] = {};
+	if (FAILED(StringCchPrintf(pattern, ARRAYSIZE(pattern), L"%s\\*.scr", directory))) return;
+	WIN32_FIND_DATA data = {};
+	HANDLE search = FindFirstFile(pattern, &data);
+	if (search == INVALID_HANDLE_VALUE) return;
+	do
 	{
-		selectedScrSaver = (LPCWSTR)ComboBox_GetItemData(hScrCombo, index);
-		::EnableWindow(hBtnPreview, TRUE);
-		::EnableWindow(hBtnSettings, TRUE);
-		::EnableWindow(updown, TRUE);
-		::EnableWindow((HWND)SendMessage(updown, UDM_GETBUDDY, 0, 0), TRUE);
-		::EnableWindow(secureCheck, TRUE);
-		::EnableWindow(GetDlgItem(1316), TRUE);
-		::EnableWindow(GetDlgItem(1322), TRUE);
-	}
-
-	ScreenPreview(hScrPreview);
-	free(name);
-
-	SetModified(TRUE);
-	return 0;
+		if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+		WCHAR path[MAX_PATH] = {};
+		if (SUCCEEDED(StringCchPrintf(path, ARRAYSIZE(path), L"%s\\%s", directory, data.cFileName)))
+			AddSaver(path);
+	} while (FindNextFile(search, &data));
+	FindClose(search);
 }
 
-BOOL CScrSaverDlgProc::OnScreenSaverSettings(UINT code, UINT id, HWND hWnd, BOOL& bHandled)
+void CScrSaverDlgProc::AddSaver(const std::wstring& path)
 {
-	_TerminateProcess(pi);
-	::DestroyWindow(hWndStatic);
-	hWndStatic = nullptr;
-
-	ScreenSettings(hScrPreview);
-	return 0;
-}
-
-BOOL CScrSaverDlgProc::OnScreenSaverPreview(UINT code, UINT id, HWND hWnd, BOOL& bHandled)
-{
-	_TerminateProcess(pi);
-	::DestroyWindow(hWndStatic);
-	hWndStatic = nullptr;
-
-	ShellExecute(0, L"open", selectedScrSaver.c_str(), NULL, NULL, SW_SHOW);
-	return 0;
-}
-
-BOOL CScrSaverDlgProc::OnPowerBtn(UINT code, UINT id, HWND hWnd, BOOL& bHandled)
-{
-	WCHAR xpcpl[MAX_PATH];
-	ExpandEnvironmentStrings(L"%windir%\\System32\\xppowerc.cpl", xpcpl, MAX_PATH);
-	if (PathFileExists(xpcpl) == FALSE)
+	DWORD attributes = GetFileAttributes(path.c_str());
+	if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY) ||
+		lstrcmpi(PathFindExtension(path.c_str()), L".scr") != 0) return;
+	for (const auto& saver : _savers)
+		if (lstrcmpi(saver.path.c_str(), path.c_str()) == 0) return;
+	WCHAR name[512] = {};
+	HMODULE module = LoadLibraryEx(path.c_str(), nullptr,
+		LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+	if (module)
 	{
-		ExpandEnvironmentStrings(L"%windir%\\System32\\powercfg.cpl", xpcpl, MAX_PATH);
+		if (!LoadString(module, 1, name, ARRAYSIZE(name)))
+			LoadString(module, 100, name, ARRAYSIZE(name));
+		FreeLibrary(module);
 	}
-	WCHAR execCmd[MAX_PATH] = L"shell32.dll,Control_RunDLL ";
-	StringCchCat(execCmd, ARRAYSIZE(execCmd), xpcpl);
-
-	ShellExecute(0, L"open", L"Rundll32.exe", execCmd, 0, SW_SHOW);
-	return 0;
-}
-
-BOOL CScrSaverDlgProc::OnSecureCheck(UINT code, UINT id, HWND hWnd, BOOL& bHandled)
-{
-	SetModified(TRUE);
-	return 0;
-}
-
-BOOL CScrSaverDlgProc::OnTimeChange(WPARAM wParam, LPNMHDR nmhdr, BOOL& bHandled)
-{
-	NMUPDOWN* ud = (NMUPDOWN*)nmhdr;
-	ud->iDelta = -ud->iDelta;
-	SetModified(TRUE);
-	return 0;
-}
-
-BOOL CScrSaverDlgProc::OnApply()
-{
-	int index = ComboBox_GetCurSel(hScrCombo);
-	if (index == 0)
+	if (!name[0])
 	{
-		RegDeleteKeyValue(HKEY_CURRENT_USER, L"Control Panel\\Desktop", L"SCRNSAVE.EXE");
-		SystemParametersInfo(SPI_SETSCREENSAVEACTIVE, FALSE, NULL, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
+		StringCchCopy(name, ARRAYSIZE(name), PathFindFileName(path.c_str()));
+		PathRemoveExtension(name);
 	}
-	else
-	{
-		HKEY key;
-		RegOpenKey(HKEY_CURRENT_USER, L"Control Panel\\Desktop", &key);
-		if (key)
-		{
-			RegSetValueEx(key, L"SCRNSAVE.EXE", 0, REG_SZ, (const BYTE*)selectedScrSaver.c_str(), (selectedScrSaver.length() + 1) * sizeof(wchar_t));
-			RegCloseKey(key);
-		}
-
-		SystemParametersInfo(SPI_SETSCREENSAVEACTIVE, TRUE, NULL, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
-		SystemParametersInfo(SPI_SETSCREENSAVESECURE, Button_GetCheck(secureCheck), NULL, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
-		int timeout = (int)SendMessage(updown, UDM_GETPOS32, 0, 0);
-		SystemParametersInfo(SPI_SETSCREENSAVETIMEOUT, timeout * 60, NULL, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
-	}
-
-	SetModified(FALSE);
-	return 0;
+	_savers.push_back({ path, name });
 }
 
-BOOL CScrSaverDlgProc::OnSetActive()
+const std::wstring& CScrSaverDlgProc::SelectedPath() const
 {
-	ScreenPreview(hScrPreview);
-	return 0;
+	static const std::wstring empty;
+	int item = ComboBox_GetCurSel(GetDlgItem(1300));
+	if (item == CB_ERR) return empty;
+	size_t index = static_cast<size_t>(ComboBox_GetItemData(GetDlgItem(1300), item));
+	return index > 0 && index <= _savers.size() ? _savers[index - 1].path : empty;
 }
 
-BOOL CScrSaverDlgProc::OnActivate(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
+void CScrSaverDlgProc::CreateMonitor()
 {
-	if (LOWORD(wParam) == WA_ACTIVE)
-	{
-		// show with new settings
-		ScreenPreview(hScrPreview);
-
-		_TerminateProcess(pi2);
-	}
-	return 0;
-}
-
-
-HBITMAP CScrSaverDlgProc::MonitorAsBmp(int width, int height, WORD id, COLORREF maskColor)
-{
-	Gdiplus::Bitmap* resized = new Gdiplus::Bitmap(width, height, PixelFormat32bppARGB);
-	if (!resized)
-	{
-		return NULL;
-	}
-
-	Gdiplus::Bitmap* monitor = Gdiplus::Bitmap::FromResource(g_hinst, MAKEINTRESOURCEW(id));
-
-	// pink
-	Gdiplus::Color transparentColor(255, GetRValue(maskColor), GetGValue(maskColor), GetBValue(maskColor));
-
-	Gdiplus::ImageAttributes imgAttr;
-	imgAttr.SetColorKey(transparentColor, transparentColor, Gdiplus::ColorAdjustTypeBitmap);
-
-	Gdiplus::Graphics graphics(resized);
+	RECT client = {};
+	::GetClientRect(GetDlgItem(1302), &client);
+	Gdiplus::Bitmap monitor(g_hinst, MAKEINTRESOURCE(IDB_BITMAP1));
+	if (monitor.GetLastStatus() != Gdiplus::Ok) return;
+	Gdiplus::Bitmap image(client.right, client.bottom, PixelFormat32bppARGB);
+	Gdiplus::Graphics graphics(&image);
+	COLORREF face = GetSysColor(COLOR_3DFACE);
+	graphics.Clear(Gdiplus::Color(255, GetRValue(face), GetGValue(face), GetBValue(face)));
+	double scale = (std::min)(static_cast<double>(client.right) / monitor.GetWidth(),
+		static_cast<double>(client.bottom) / monitor.GetHeight());
+	int width = static_cast<int>(monitor.GetWidth() * scale);
+	int height = static_cast<int>(monitor.GetHeight() * scale);
+	int x = (client.right - width) / 2, y = (client.bottom - height) / 2;
+	Gdiplus::Color mask(255, 255, 255, 0);
+	Gdiplus::ImageAttributes attributes;
+	attributes.SetColorKey(mask, mask);
 	graphics.SetInterpolationMode(Gdiplus::InterpolationModeNearestNeighbor);
-	Gdiplus::Rect rect(0, 0, width, height);
-
-	// draw bmp
-	graphics.DrawImage(monitor, rect, 0, 0, monitor->GetWidth(), monitor->GetHeight(), Gdiplus::UnitPixel, &imgAttr);
-
-	// create hbitmap
-	HBITMAP hBitmap = NULL;
-	resized->GetHBITMAP(Gdiplus::Color(0, 0, 0), &hBitmap);
-
-	delete resized;
-	delete monitor;
-	return hBitmap;
+	graphics.DrawImage(&monitor, Gdiplus::Rect(x, y, width, height),
+		0, 0, monitor.GetWidth(), monitor.GetHeight(), Gdiplus::UnitPixel, &attributes);
+	_screen = { x + static_cast<LONG>(16 * scale), y + static_cast<LONG>(17 * scale),
+		x + static_cast<LONG>(168 * scale), y + static_cast<LONG>(129 * scale) };
+	COLORREF color = GetDeskopColor();
+	Gdiplus::SolidBrush desktop(Gdiplus::Color(255, GetRValue(color), GetGValue(color), GetBValue(color)));
+	graphics.FillRectangle(&desktop, static_cast<int>(_screen.left), static_cast<int>(_screen.top),
+		static_cast<int>(_screen.right - _screen.left), static_cast<int>(_screen.bottom - _screen.top));
+	HBITMAP next = nullptr;
+	if (image.GetHBITMAP(Gdiplus::Color(255, GetRValue(face), GetGValue(face), GetBValue(face)), &next) != Gdiplus::Ok)
+		return;
+	Static_SetBitmap(GetDlgItem(1302), next);
+	if (_monitorBitmap) DeleteObject(_monitorBitmap);
+	_monitorBitmap = next;
 }
 
-VOID CScrSaverDlgProc::AddScreenSavers(HWND comboBox)
+void CScrSaverDlgProc::UpdateControls()
 {
-	std::vector<LPWSTR> scrsavers;
-
-	WCHAR systemdir[MAX_PATH];
-	ExpandEnvironmentStrings(L"%windir%\\system32", systemdir, MAX_PATH);
-	LPCWSTR extensions[] = { L".scr" };
-	EnumDir(systemdir, extensions, ARRAYSIZE(extensions), scrsavers, FALSE);
-
-	for (LPWSTR path : scrsavers)
-	{
-		HMODULE hScr = LoadLibraryEx(path, NULL, LOAD_LIBRARY_AS_DATAFILE);
-		WCHAR name[MAX_PATH];
-		if (!hScr) continue;
-
-		if (!LoadString(hScr, 1, name, MAX_PATH))
-		{
-			LoadString(hScr, 100, name, MAX_PATH);
-		}
-		FreeLibrary(hScr);
-		int index = ComboBox_AddString(comboBox, name);
-		ComboBox_SetItemData(comboBox, index, path);
-	}
+	bool selected = !SelectedPath().empty();
+	bool external = _external.hProcess != nullptr;
+	for (int id : { 1303, 1304 }) ::EnableWindow(GetDlgItem(id), selected && !external);
+	for (int id : { 1306, 1307, 1316, 1320, 1322 }) ::EnableWindow(GetDlgItem(id), selected);
 }
 
-VOID CScrSaverDlgProc::ScreenPreview(HWND preview)
+bool CScrSaverDlgProc::Launch(LPCWSTR arguments, PROCESS_INFORMATION& process, bool reportError)
 {
-	_TerminateProcess(pi);
-	if (!hWndStatic)
+	const std::wstring& path = SelectedPath();
+	if (path.empty()) return false;
+	std::wstring command = L"\"" + path + L"\" " + arguments;
+	STARTUPINFO startup = { sizeof(startup) };
+	bool launched = CreateProcess(path.c_str(), &command[0], nullptr, nullptr,
+		FALSE, 0, nullptr, nullptr, &startup, &process) != FALSE;
+	if (launched)
 	{
-		Microsoft::WRL::ComPtr<IWindowConfig> pConfig;
-		pWndPreview.As(&pConfig);
-		
-		SIZE sizeMonitor;
-		pConfig->GetMonitorOffset(&sizeMonitor);
-
-		hWndStatic = CreateWindow(WC_STATIC, 0,
-			WS_CHILD | WS_VISIBLE | SS_BLACKRECT, sizeMonitor.cx, sizeMonitor.cy, 152, 112,
-			preview, NULL, g_hinst, NULL);
-		::SetWindowLongPtr(hWndStatic, GWLP_WNDPROC, (LONG_PTR)StaticProc);
+		CloseHandle(process.hThread);
+		process.hThread = nullptr;
 	}
+	else if (reportError) Error(4250);
+	return launched;
+}
 
-	if (!selectedScrSaver.empty())
+void CScrSaverDlgProc::StopPreview()
+{
+	if (_preview.hProcess)
 	{
-		ZeroMemory(&pi, sizeof(pi));
-
-		TCHAR cmdLine[256];
-		wsprintf(cmdLine, L"%s /p %u", selectedScrSaver.c_str(), (UINT_PTR)hWndStatic);
-
-		STARTUPINFO si = { sizeof(si) };
-		CreateProcess(0, cmdLine, 0, 0, FALSE, 0, 0, 0, &si, &pi);
+		if (_previewHost) ::EnumChildWindows(_previewHost, ClosePreviewWindow, 0);
+		if (WaitForSingleObject(_preview.hProcess, 200) == WAIT_TIMEOUT)
+			TerminateProcess(_preview.hProcess, 0);
+		CloseProcess(_preview);
 	}
-	else
+	if (_previewHost)
 	{
-		if (hWndStatic)
-		{
-			::DestroyWindow(hWndStatic);
-			hWndStatic = nullptr;
-		}
+		::DestroyWindow(_previewHost);
+		_previewHost = nullptr;
 	}
 }
 
-VOID CScrSaverDlgProc::ScreenSettings(HWND preview)
+void CScrSaverDlgProc::StartPreview()
 {
-	if (!selectedScrSaver.empty())
+	StopPreview();
+	if (!_active || _external.hProcess || SelectedPath().empty() || IsRectEmpty(&_screen)) return;
+	_previewHost = CreateWindow(WC_STATIC, nullptr, WS_CHILD | WS_VISIBLE | SS_BLACKRECT | WS_CLIPCHILDREN,
+		_screen.left, _screen.top, _screen.right - _screen.left, _screen.bottom - _screen.top,
+		GetDlgItem(1302), nullptr, g_hinst, nullptr);
+	if (!_previewHost) return;
+	WCHAR arguments[80] = {};
+	StringCchPrintf(arguments, ARRAYSIZE(arguments), L"/p %llu",
+		static_cast<unsigned long long>(reinterpret_cast<UINT_PTR>(_previewHost)));
+	if (!Launch(arguments, _preview, false))
 	{
-		ZeroMemory(&pi2, sizeof(pi2));
-
-		TCHAR cmdLine[256];
-		wsprintf(cmdLine, L"%s /c /p %u", selectedScrSaver.c_str(), (UINT_PTR)::GetParent(preview));
-
-		STARTUPINFO si = { sizeof(si) };
-		CreateProcess(0, cmdLine, 0, 0, FALSE, 0, 0, 0, &si, &pi2);
-
+		::DestroyWindow(_previewHost);
+		_previewHost = nullptr;
 	}
 }
 
-
-LRESULT CALLBACK StaticProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+LRESULT CScrSaverDlgProc::OnSelectionChange(WORD, WORD, HWND, BOOL&)
 {
-	if (uMsg == WM_PAINT)
+	_dirty = true;
+	SetModified(TRUE);
+	UpdateControls();
+	StartPreview();
+	return 0;
+}
+
+LRESULT CScrSaverDlgProc::OnChanged(WORD, WORD, HWND, BOOL&)
+{
+	if (!_initializing)
 	{
-		PAINTSTRUCT ps;
-		HDC hdc = BeginPaint(hWnd, &ps);
-		HBRUSH hBrush = CreateSolidBrush(RGB(0, 0, 0));
-		FillRect(hdc, &ps.rcPaint, hBrush);
-		DeleteObject(hBrush);
-		EndPaint(hWnd, &ps);
-		return 0;
+		_dirty = true;
+		SetModified(TRUE);
 	}
-	return DefWindowProc(hWnd, uMsg, wParam, lParam);
+	return 0;
+}
+
+void CScrSaverDlgProc::StartExternal(bool fullScreen)
+{
+	if (_external.hProcess || SelectedPath().empty()) return;
+	StopPreview();
+	if (!SetTimer(82, 250))
+	{
+		Error(4250);
+		StartPreview();
+		return;
+	}
+	WCHAR arguments[80] = {};
+	if (fullScreen) StringCchCopy(arguments, ARRAYSIZE(arguments), L"/s");
+	else StringCchPrintf(arguments, ARRAYSIZE(arguments), L"/c:%llu",
+		static_cast<unsigned long long>(reinterpret_cast<UINT_PTR>(m_hWnd)));
+	_externalPreview = fullScreen;
+	if (!Launch(arguments, _external, true))
+	{
+		KillTimer(82);
+		StartPreview();
+	}
+	UpdateControls();
+}
+
+LRESULT CScrSaverDlgProc::OnSettings(WORD, WORD, HWND, BOOL&)
+{
+	StartExternal(false);
+	return 0;
+}
+
+LRESULT CScrSaverDlgProc::OnPreview(WORD, WORD, HWND, BOOL&)
+{
+	StartExternal(true);
+	return 0;
+}
+
+LRESULT CScrSaverDlgProc::OnTimer(UINT, WPARAM timer, LPARAM, BOOL&)
+{
+	if (timer == 82 && (!_external.hProcess || WaitForSingleObject(_external.hProcess, 0) != WAIT_TIMEOUT))
+	{
+		KillTimer(82);
+		CloseProcess(_external);
+		UpdateControls();
+		StartPreview();
+	}
+	return 0;
+}
+
+int CScrSaverDlgProc::OnSetActive()
+{
+	_active = true;
+	CreateMonitor();
+	StartPreview();
+	return 0;
+}
+
+LRESULT CScrSaverDlgProc::OnSysColorChange(UINT, WPARAM, LPARAM, BOOL& handled)
+{
+	CreateMonitor();
+	handled = FALSE;
+	return 0;
+}
+
+BOOL CScrSaverDlgProc::OnKillActive()
+{
+	_active = false;
+	StopPreview();
+	return FALSE;
+}
+
+LRESULT CScrSaverDlgProc::OnDestroy(UINT, WPARAM, LPARAM, BOOL&)
+{
+	KillTimer(82);
+	StopPreview();
+	if (_externalPreview && _external.hProcess && WaitForSingleObject(_external.hProcess, 0) == WAIT_TIMEOUT)
+		TerminateProcess(_external.hProcess, 0);
+	CloseProcess(_external);
+	if (_monitorBitmap) DeleteObject(_monitorBitmap);
+	if (_energyBitmap) DeleteObject(_energyBitmap);
+	return 0;
+}
+
+int CScrSaverDlgProc::OnApply()
+{
+	if (!_dirty) return PSNRET_NOERROR;
+	std::wstring path = SelectedPath();
+	BOOL valid = FALSE;
+	UINT minutes = GetDlgItemInt(1306, &valid, FALSE);
+	if (!path.empty() && (!valid || minutes < 1 || minutes > 9999))
+	{
+		Error(4251);
+		::SetFocus(GetDlgItem(1306));
+		return PSNRET_INVALID_NOCHANGEPAGE;
+	}
+	if (!path.empty() && GetFileAttributes(path.c_str()) == INVALID_FILE_ATTRIBUTES)
+	{
+		Error(4250);
+		return PSNRET_INVALID_NOCHANGEPAGE;
+	}
+	HKEY key = nullptr;
+	if (RegCreateKeyEx(HKEY_CURRENT_USER, DesktopKey, 0, nullptr, 0,
+		KEY_QUERY_VALUE | KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
+	{
+		Error(4252);
+		return PSNRET_INVALID_NOCHANGEPAGE;
+	}
+	DWORD oldType = REG_SZ, oldBytes = 0;
+	LSTATUS status = RegQueryValueEx(key, L"SCRNSAVE.EXE", nullptr, &oldType, nullptr, &oldBytes);
+	bool existed = status == ERROR_SUCCESS;
+	std::vector<BYTE> oldPath(oldBytes);
+	BOOL oldActive = FALSE, oldSecure = FALSE;
+	int oldTimeout = 0;
+	bool snapshot = (status == ERROR_SUCCESS || status == ERROR_FILE_NOT_FOUND) &&
+		(!existed || RegQueryValueEx(key, L"SCRNSAVE.EXE", nullptr, &oldType, oldPath.data(), &oldBytes) == ERROR_SUCCESS) &&
+		SystemParametersInfo(SPI_GETSCREENSAVEACTIVE, 0, &oldActive, 0) &&
+		SystemParametersInfo(SPI_GETSCREENSAVESECURE, 0, &oldSecure, 0) &&
+		SystemParametersInfo(SPI_GETSCREENSAVETIMEOUT, 0, &oldTimeout, 0);
+	if (!snapshot)
+	{
+		RegCloseKey(key);
+		Error(4252);
+		return PSNRET_INVALID_NOCHANGEPAGE;
+	}
+	status = path.empty() ? RegDeleteValue(key, L"SCRNSAVE.EXE") :
+		RegSetValueEx(key, L"SCRNSAVE.EXE", 0, REG_SZ, reinterpret_cast<const BYTE*>(path.c_str()),
+			static_cast<DWORD>((path.size() + 1) * sizeof(WCHAR)));
+	bool success = status == ERROR_SUCCESS || (path.empty() && status == ERROR_FILE_NOT_FOUND);
+	const UINT flags = SPIF_UPDATEINIFILE | SPIF_SENDCHANGE;
+	if (success && !path.empty())
+	{
+		success = SystemParametersInfo(SPI_SETSCREENSAVESECURE,
+			IsDlgButtonChecked(1320) == BST_CHECKED, nullptr, flags) != FALSE;
+		if (success) success = SystemParametersInfo(SPI_SETSCREENSAVETIMEOUT, minutes * 60, nullptr, flags) != FALSE;
+	}
+	if (success) success = SystemParametersInfo(SPI_SETSCREENSAVEACTIVE, !path.empty(), nullptr, flags) != FALSE;
+	if (!success)
+	{
+		LSTATUS restoredPath = existed ? RegSetValueEx(key, L"SCRNSAVE.EXE", 0,
+			oldType, oldPath.data(), oldBytes) : RegDeleteValue(key, L"SCRNSAVE.EXE");
+		bool restored = restoredPath == ERROR_SUCCESS || (!existed && restoredPath == ERROR_FILE_NOT_FOUND);
+		restored &= SystemParametersInfo(SPI_SETSCREENSAVESECURE, oldSecure, nullptr, flags) != FALSE;
+		restored &= SystemParametersInfo(SPI_SETSCREENSAVETIMEOUT, oldTimeout, nullptr, flags) != FALSE;
+		restored &= SystemParametersInfo(SPI_SETSCREENSAVEACTIVE, oldActive, nullptr, flags) != FALSE;
+		RegCloseKey(key);
+		Error(restored ? 4252 : 4253);
+		return PSNRET_INVALID_NOCHANGEPAGE;
+	}
+	RegCloseKey(key);
+	_dirty = false;
+	SetModified(FALSE);
+	return PSNRET_NOERROR;
+}
+
+void CScrSaverDlgProc::Error(UINT id)
+{
+	WCHAR text[512] = {}, title[128] = {};
+	LoadString(g_hinst, id, text, ARRAYSIZE(text));
+	LoadString(g_hinst, 4254, title, ARRAYSIZE(title));
+	MessageBox(text, title, MB_OK | MB_ICONERROR);
+}
+
+LRESULT CScrSaverDlgProc::OnPower(WORD, WORD, HWND, BOOL&)
+{
+	WCHAR system[MAX_PATH] = {}, control[MAX_PATH] = {};
+	GetSystemDirectory(system, ARRAYSIZE(system));
+	StringCchPrintf(control, ARRAYSIZE(control), L"%s\\control.exe", system);
+	if (reinterpret_cast<INT_PTR>(ShellExecute(m_hWnd, L"open", control,
+		L"/name Microsoft.PowerOptions", nullptr, SW_SHOWNORMAL)) <= 32) Error(4255);
+	return 0;
 }

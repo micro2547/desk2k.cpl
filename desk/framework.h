@@ -1,5 +1,8 @@
 #pragma once
 
+// Resolve common-control APIs against this DLL's activation context, not its host's.
+#define ISOLATION_AWARE_ENABLED 1
+
 #include <strsafe.h>
 #include <vector>
 #include <string>
@@ -46,3 +49,6 @@
 #pragma comment(lib, "Uxtheme")
 #pragma comment(lib, "Shlwapi")
 #pragma comment(lib, "setupapi.lib")
+#pragma comment(lib, "Shell32.lib")
+#pragma comment(lib, "Ole32.lib")
+#pragma comment(lib, "Advapi32.lib")

@@ -42,7 +42,7 @@
     <ClInclude Include="helper.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="ThemesPage.h">
+    <ClInclude Include="WebPage.h">
       <Filter>Pages</Filter>
     </ClInclude>
     <ClInclude Include="BackgroundPage.h">
@@ -50,9 +50,6 @@
     </ClInclude>
     <ClInclude Include="ScreensaverPage.h">
       <Filter>Pages</Filter>
-    </ClInclude>
-    <ClInclude Include="todo.h">
-      <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="AppearancePage.h">
       <Filter>Pages</Filter>
@@ -63,22 +60,22 @@
     <ClInclude Include="SettingsPage.h">
       <Filter>Pages</Filter>
     </ClInclude>
+    <ClInclude Include="MonitorLayout.h">
+      <Filter>Pages</Filter>
+    </ClInclude>
+    <ClInclude Include="MonitorArrangement.h">
+      <Filter>Pages</Filter>
+    </ClInclude>
     <ClInclude Include="EffectsDlg.h">
       <Filter>Dialogs</Filter>
     </ClInclude>
     <ClInclude Include="ThemeChngDlg.h">
       <Filter>Dialogs</Filter>
     </ClInclude>
-    <ClInclude Include="fms.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="DeskIcons.h">
       <Filter>Dialogs</Filter>
     </ClInclude>
     <ClInclude Include="version.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="thmfile.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="wndprvw.h">
@@ -98,7 +95,7 @@
     <ClCompile Include="version.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="ThemesPage.cpp">
+    <ClCompile Include="WebPage.cpp">
       <Filter>Pages</Filter>
     </ClCompile>
     <ClCompile Include="BackgroundPage.cpp">
@@ -125,6 +122,9 @@
     <ClCompile Include="SettingsPage.cpp">
       <Filter>Pages</Filter>
     </ClCompile>
+    <ClCompile Include="MonitorArrangement.cpp">
+      <Filter>Pages</Filter>
+    </ClCompile>
     <ClCompile Include="EffectsDlg.cpp">
       <Filter>Dialogs</Filter>
     </ClCompile>
@@ -134,14 +134,8 @@
     <ClCompile Include="cscheme.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="fms.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="DeskIcons.cpp">
       <Filter>Dialogs</Filter>
-    </ClCompile>
-    <ClCompile Include="thmfile.cpp">
-      <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -166,13 +160,13 @@
     <Manifest Include="app.manifest" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="small.ico">
+    <Image Include="assets\desk.ico">
       <Filter>Resource Files</Filter>
     </Image>
-    <Image Include="Bitmap1.bmp">
+    <Image Include="assets\monitor.bmp">
       <Filter>Resource Files</Filter>
     </Image>
-    <Image Include="Bitmap120.bmp">
+    <Image Include="assets\energyst.bmp">
       <Filter>Resource Files</Filter>
     </Image>
   </ItemGroup>

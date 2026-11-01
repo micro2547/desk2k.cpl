@@ -1,148 +1,163 @@
 #include "pch.h"
-#include "theme.h"
-#include "ThemesPage.h"
 #include "BackgroundPage.h"
 #include "ScreensaverPage.h"
 #include "AppearancePage.h"
 #include "SettingsPage.h"
+#include "EffectsDlg.h"
+#include "WebPage.h"
 #include "desk.h"
 #include "helper.h"
 #include "uxtheme.h"
-#include "fms.h"
-//#include "todo.h"
 
 HINSTANCE g_hinst;
-HINSTANCE g_hThemeUI;
-IThemeManager2* pThemeManager = NULL;
 IDesktopWallpaper* pDesktopWallpaper = NULL;
 ULONG_PTR gdiplusToken;
 
-IUnknown* currentITheme;
-THEMEINFO* selectedTheme = new THEMEINFO();
-BOOL selectionPicker;
-PROCESS_INFORMATION pi;
-FONTINFO* fontInfo = new FONTINFO();
-BOOL themeSelected = FALSE;
+static THEMEINFO themeState;
+THEMEINFO* selectedTheme = &themeState;
+PROCESS_INFORMATION pi = {};
 
-const IID IID_IThemeManager2 = { 0xc1e8c83e, 0x845d, 0x4d95, {0x81, 0xdb, 0xe2, 0x83, 0xfd, 0xff, 0xc0, 0x00} };
+namespace
+{
+	class DialogFonts;
+	thread_local DialogFonts* activeDialogFonts = nullptr;
 
-
-int CALLBACK DeskCallback(HWND hwnd, UINT msg, LPARAM) {
-	if (msg == PSCB_INITIALIZED)
+	// Keep these handles alive for the whole sheet, including its common dialogs.
+	class DialogFonts
 	{
-		HFONT font = CreateFont(MulDiv(-11, GetDpiForWindow(hwnd), 96), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, 0, 0, L"MS Sans Serif");
+	public:
+		DialogFonts() : previous(activeDialogFonts)
+		{
+			activeDialogFonts = this;
+			hook = SetWindowsHookExW(WH_CALLWNDPROCRET, DialogReturned, nullptr, GetCurrentThreadId());
+		}
 
-		HWND hwndTab = PropSheet_GetTabControl(hwnd);
-		HWND hwndOK = GetDlgItem(hwnd, IDOK);
-		HWND hwndCancel = GetDlgItem(hwnd, IDCANCEL);
-		HWND hwndApply = GetDlgItem(hwnd, 0x3021);
+		~DialogFonts()
+		{
+			if (hook) UnhookWindowsHookEx(hook);
+			activeDialogFonts = previous;
+			for (HFONT font : fonts)
+				if (font) DeleteObject(font);
+		}
 
-		SendMessageW(hwndTab, WM_SETFONT, (WPARAM)font, TRUE);
-		SendMessageW(hwndOK, WM_SETFONT, (WPARAM)font, TRUE);
-		SendMessageW(hwndCancel, WM_SETFONT, (WPARAM)font, TRUE);
-		SendMessageW(hwndApply, WM_SETFONT, (WPARAM)font, TRUE);
+		void Apply(HWND window)
+		{
+			if (!dpi) dpi = GetDpiForWindow(window);
+			SetFont(window);
+			EnumChildWindows(window, SetChildFont, reinterpret_cast<LPARAM>(this));
+		}
+
+	private:
+		void SetFont(HWND window)
+		{
+			LOGFONTW current = {};
+			GetObjectW(reinterpret_cast<HFONT>(SendMessageW(window, WM_GETFONT, 0, 0)),
+				sizeof(current), &current);
+			const int style = (current.lfWeight >= FW_BOLD ? 1 : 0) | (current.lfItalic ? 2 : 0);
+			if (!fonts[style])
+			{
+				LOGFONTW font = {};
+				font.lfHeight = -MulDiv(8, dpi ? dpi : 96, 72);
+				font.lfWeight = style & 1 ? FW_BOLD : FW_NORMAL;
+				font.lfItalic = (style & 2) != 0;
+				font.lfCharSet = DEFAULT_CHARSET;
+				StringCchCopyW(font.lfFaceName, ARRAYSIZE(font.lfFaceName), L"MS Sans Serif");
+				fonts[style] = CreateFontIndirectW(&font);
+			}
+			if (fonts[style]) SendMessageW(window, WM_SETFONT, reinterpret_cast<WPARAM>(fonts[style]), TRUE);
+		}
+
+		static BOOL CALLBACK SetChildFont(HWND window, LPARAM context)
+		{
+			reinterpret_cast<DialogFonts*>(context)->SetFont(window);
+			return TRUE;
+		}
+
+		static LRESULT CALLBACK DialogReturned(int code, WPARAM wParam, LPARAM lParam)
+		{
+			if (code >= 0 && activeDialogFonts)
+			{
+				const auto message = reinterpret_cast<const CWPRETSTRUCT*>(lParam);
+				if (message->message == WM_INITDIALOG)
+					activeDialogFonts->Apply(message->hwnd);
+			}
+			return CallNextHookEx(nullptr, code, wParam, lParam);
+		}
+
+		DialogFonts* previous;
+		HHOOK hook = nullptr;
+		HFONT fonts[4] = {};
+		int dpi = 0;
+	};
+}
+
+
+class CDisplaySheet : public WTL::CPropertySheetImpl<CDisplaySheet>
+{
+public:
+	explicit CDisplaySheet(LPCWSTR title) : WTL::CPropertySheetImpl<CDisplaySheet>(title) {}
+
+	void OnSheetInitialized()
+	{
+		if (activeDialogFonts) activeDialogFonts->Apply(m_hWnd);
 	}
-	return 0;
-}
+};
 
-void FillFontList(void*)
+
+void PropertySheetMoment(HWND owner, LPWSTR lpCmdLine)
 {
-	// init fms
-	InitFms();
+	// COM belongs to the calling UI thread, never the loader lock.
+	const HRESULT apartment = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+	INITCOMMONCONTROLSEX controls = { sizeof(controls),
+		ICC_WIN95_CLASSES | ICC_UPDOWN_CLASS | ICC_BAR_CLASSES };
+	InitCommonControlsEx(&controls);
+	Gdiplus::GdiplusStartupInput startup;
+	if (Gdiplus::GdiplusStartup(&gdiplusToken, &startup, nullptr) != Gdiplus::Ok)
+	{
+		if (SUCCEEDED(apartment)) CoUninitialize();
+		return;
+	}
 
-	// fill list
-	GetFilteredFontFamilies(&fontInfo->cFontList, &fontInfo->ppFontList);
-}
-
-void PropertySheetMoment(LPWSTR lpCmdLine)
-{
-	SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-
-	Gdiplus::GdiplusStartupInput gdiplusStartupInput;
-	Gdiplus::GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
-
-	HRESULT hr = CoCreateInstance(CLSID_ThemeManager2, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pThemeManager));
-	pThemeManager->Init(ThemeInitNoFlags);
-
-	hr = CoCreateInstance(CLSID_DesktopWallpaper, NULL, CLSCTX_ALL, IID_PPV_ARGS(&pDesktopWallpaper));
-
-#ifndef NDEBUG
-	AllocConsole();
-	FILE* pFile;
-	freopen_s(&pFile, "CONOUT$", "w", stdout);
-#endif
-
-	printf("Hello world!\n");
-	g_hThemeUI = LoadLibraryEx(L"themeui.dll", NULL, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_SEARCH_SYSTEM32);
-
-	// initialize theme manager
+	themeState = THEMEINFO{};
+	themeState.newColor = 0xB0000000;
+	themeState.useDesktopColor = true;
+	CoCreateInstance(CLSID_DesktopWallpaper, nullptr, CLSCTX_ALL,
+		IID_PPV_ARGS(&pDesktopWallpaper));
 	InitUxtheme();
 
-	// cache the font list
-	_beginthread(FillFontList, 0, NULL);
-
-	//_beginthread(BrowserThread, 0, 0);
-
-	// init invisible owner window
-	HWND owner = CreateWindowExW(
-		0,
-		L"STATIC",
-		L"",
-		WS_POPUP | WS_CAPTION,
-		50, 50, 0, 0,
-		NULL,
-		NULL,
-		GetModuleHandle(NULL),
-		NULL
-	);
-	
-	// init property sheet
-	WTL::CPropertySheet sheet(L"Display Properties");
-	sheet.m_psh.pfnCallback = DeskCallback;
-
-	CThemeDlgProc themedlg;
-	CBackgroundDlgProc backgrounddlg;
-	CScrSaverDlgProc screensaverdlg;
-	CAppearanceDlgProc appearancedlg;
-	CSettingsDlgProc settingsdlg;
-
-#ifndef VISTA
-	sheet.AddPage(themedlg);
-	sheet.AddPage(backgrounddlg);
-	sheet.AddPage(screensaverdlg);
-	sheet.AddPage(appearancedlg);
-	sheet.AddPage(settingsdlg);
-#endif
-
-	if (lpCmdLine)
+	WCHAR title[128] = {};
+	LoadStringW(g_hinst, IDS_DISPLAY_TITLE, title, ARRAYSIZE(title));
 	{
-		int index = _wtoi(lpCmdLine) + 1;
-		if (index > 4 || index < 0) index = 4;
-#ifndef VISTA
-		sheet.SetActivePage(index);
-#else
-		LPCPROPSHEETPAGE array[5] = {themedlg, backgrounddlg, screensaverdlg, appearancedlg, settingsdlg};
-		sheet.AddPage(array[index]);
-#endif
+		DialogFonts dialogFonts;
+		CDisplaySheet sheet(title);
+		sheet.m_psh.dwFlags |= PSH_USEICONID;
+		sheet.m_psh.pszIcon = MAKEINTRESOURCEW(IDI_ICON1);
+		CBackgroundDlgProc background;
+		CScrSaverDlgProc saver;
+		CAppearanceDlgProc appearance;
+		CWebPage web;
+		CEffectsDlg effects;
+		CSettingsDlgProc settings;
+		sheet.AddPage(background);
+		sheet.AddPage(saver);
+		sheet.AddPage(appearance);
+		sheet.AddPage(web);
+		sheet.AddPage(effects);
+		sheet.AddPage(settings);
+		if (lpCmdLine && *lpCmdLine)
+		{
+			WCHAR* end = nullptr;
+			const long index = wcstol(lpCmdLine, &end, 10);
+			if (end != lpCmdLine && index >= 0 && index < 6)
+				sheet.SetActivePage(static_cast<int>(index));
+		}
+		sheet.DoModal(owner);
 	}
-#ifdef VISTA
-	else
-	{
-		sheet.AddPage(settingsdlg);
-	}
-#endif
 
-	//show
-	sheet.DoModal(owner);
-	DestroyWindow(owner);
-
-	// cleanup
-	Gdiplus::GdiplusShutdown(gdiplusToken);
-	pThemeManager->Release();
-	pDesktopWallpaper->Release();
-	if (currentITheme) currentITheme->Release();
-	free(selectedTheme);
 	_TerminateProcess(pi);
+	if (pDesktopWallpaper) { pDesktopWallpaper->Release(); pDesktopWallpaper = nullptr; }
+	Gdiplus::GdiplusShutdown(gdiplusToken);
+	if (SUCCEEDED(apartment)) CoUninitialize();
 }
 
 extern "C" LONG APIENTRY CPlApplet(
@@ -174,7 +189,7 @@ extern "C" LONG APIENTRY CPlApplet(
 		lParam2 = 0L;
 		// fall through
 	case CPL_STARTWPARMS:
-		PropertySheetMoment((LPWSTR)lParam2);
+		PropertySheetMoment(hwndCPL, (LPWSTR)lParam2);
 		return (LONG)TRUE;
 	}
 	return retCode;

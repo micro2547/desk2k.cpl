@@ -11,10 +11,9 @@ BOOL APIENTRY DllMain( HMODULE hModule,
     {
     case DLL_PROCESS_ATTACH:
         g_hinst = hModule;
-        CoInitializeEx(0, COINIT_MULTITHREADED);
         break;
     case DLL_PROCESS_DETACH:
-        CoUninitialize();
+        IsolationAwareCleanup();
         break;
     }
     return TRUE;

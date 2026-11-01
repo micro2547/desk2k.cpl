@@ -13,6 +13,7 @@ private:
 		MESSAGE_HANDLER(WM_TIMER, OnTimer)
 		COMMAND_ID_HANDLER(6, OnYes)
 		COMMAND_ID_HANDLER(7, OnNo)
+		COMMAND_ID_HANDLER(IDCANCEL, OnNo)
 		MSG_WM_CLOSE(OnClose)
 	END_MSG_MAP()
 
@@ -22,9 +23,10 @@ private:
 	LRESULT OnYes(UINT uNotifyCode, int nID, HWND hWnd, BOOL& bHandled);
 	LRESULT OnNo(UINT uNotifyCode, int nID, HWND hWnd, BOOL& bHandled);
 	void OnClose();
+	void UpdateCountdown();
 
 	HWND _wndTimerText;
 	HWND _wndQuestion;
-	int _timerCount;
+	ULONGLONG _deadline = 0;
 };
 

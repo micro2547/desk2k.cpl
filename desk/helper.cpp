@@ -17,22 +17,9 @@ VOID _TerminateProcess(PROCESS_INFORMATION& hp)
 
 COLORREF GetDeskopColor()
 {
-	COLORREF clr;
-	// colorref never has any alpha value, so a bogus value
-	if (selectedTheme->newColor != 0xB0000000)
-	{
-		clr = selectedTheme->newColor;
-	}
-	else if (selectedTheme->useDesktopColor)
-	{
-		pDesktopWallpaper->GetBackgroundColor(&clr);
-	}
-	else
-	{
-		auto themeClass = std::make_unique<CTheme>(currentITheme);
-		themeClass->GetBackgroundColor(&clr);
-	}
-	return clr;
+	if (selectedTheme && selectedTheme->newColor != 0xB0000000)
+		return selectedTheme->newColor;
+	return GetSysColor(COLOR_DESKTOP);
 }
 
 
@@ -213,17 +200,6 @@ void ScaleLogFont(LOGFONT& lf, int dpi)
 }
 
 
-HRESULT GetSolidBtnBmp(COLORREF clr, int dpi, SIZE size, HBITMAP* pbOut)
-{
-	int i = MulDiv(10, dpi, 96);
-	Gdiplus::Bitmap bmp(size.cx - i, size.cy - i);
-	Gdiplus::Graphics g(&bmp);
-	Gdiplus::SolidBrush brush(Gdiplus::Color(SPLIT_COLORREF(clr)));
-	g.FillRectangle(&brush, 0, 0, bmp.GetWidth(), bmp.GetHeight());
-
-	return bmp.GetHBITMAP(Gdiplus::Color(0, 0, 0), pbOut) == Gdiplus::Ok ? S_OK : E_FAIL;
-}
-
 BOOL ColorPicker(COLORREF clr, HWND hWnd, CHOOSECOLOR* clrOut)
 {
 	static COLORREF acrCustClr[16];
@@ -240,110 +216,8 @@ BOOL ColorPicker(COLORREF clr, HWND hWnd, CHOOSECOLOR* clrOut)
 	return out;
 }
 
-// callee must free allocated SCHEMEDATA when done
-void CreateBlankScheme()
-{
-	if (!selectedTheme->selectedScheme)
-	{
-		COLORREF rgb[MAX_COLORS];
-		for (int i = 0; i < MAX_COLORS; ++i)
-		{
-			rgb[i] = GetSysColor(i);
-		}
-
-		NONCLIENTMETRICSW ncm = { sizeof(ncm) };
-		SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, NULL, 96);
-
-		NONCLIENTMETRICSW_2k ncm2k;
-		memcpy(&ncm2k, &ncm, sizeof(ncm2k));
-
-		LOGFONT lfIcon;
-		SystemParametersInfoForDpi(SPI_GETICONTITLELOGFONT, sizeof(lfIcon), &lfIcon, NULL, 96);
-
-		SCHEMEDATA* currentData = (SCHEMEDATA*)malloc(sizeof(SCHEMEDATA));
-		if (currentData)
-		{
-			currentData->lfIconTitle = lfIcon;
-			currentData->ncm = ncm2k;
-			memcpy(currentData->rgb, rgb, sizeof(rgb));
-			currentData->variant = 0x8;			// indicates custom theme
-			currentData->dpiScaled = false;
-			currentData->iPaddedBorderWidth = ncm.iPaddedBorderWidth;
-
-			selectedTheme->selectedScheme = currentData;
-		}
-	}
-	else
-	{
-		SCHEMEDATA* currentData = (SCHEMEDATA*)malloc(sizeof(SCHEMEDATA));
-		*currentData = *selectedTheme->selectedScheme;
-		currentData->variant = 0x8;		// indicates custom theme
-
-		if (selectedTheme->selectedScheme->variant == 0x8)
-		{
-			free(selectedTheme->selectedScheme);
-			selectedTheme->selectedScheme = NULL;
-		}
-
-		selectedTheme->selectedScheme = currentData;
-	}
-}
-
-void CreateThemedMetricsScheme(int dpi, void* pTheme)
-{
-	HTHEME hTheme = OpenNcThemeData(pTheme, L"Window");
-
-	SCHEMEDATA* currentData = (SCHEMEDATA*)malloc(sizeof(SCHEMEDATA));
-	if (currentData)
-	{
-		ZeroMemory(currentData, sizeof(SCHEMEDATA));
-		currentData->dpiScaled = false;
-		currentData->variant = 0x8;
-
-		selectedTheme->selectedScheme = currentData;
-	}
-
-	for (int i = 0; i < MAX_COLORS; ++i)
-	{
-		selectedTheme->selectedScheme->rgb[i] = GetThemeSysColor(hTheme, i);
-	}
-	 
-	GetThemeSysFont(hTheme, TMT_CAPTIONFONT, &selectedTheme->selectedScheme->ncm.lfCaptionFont);
-	GetThemeSysFont(hTheme, TMT_SMALLCAPTIONFONT, &selectedTheme->selectedScheme->ncm.lfSmCaptionFont);
-	GetThemeSysFont(hTheme, TMT_MENUFONT, &selectedTheme->selectedScheme->ncm.lfMenuFont);
-	GetThemeSysFont(hTheme, TMT_STATUSFONT, &selectedTheme->selectedScheme->ncm.lfStatusFont);
-	GetThemeSysFont(hTheme, TMT_MSGBOXFONT, &selectedTheme->selectedScheme->ncm.lfMessageFont);
-	GetThemeSysFont(hTheme, TMT_ICONTITLEFONT, &selectedTheme->selectedScheme->lfIconTitle);
-
-	selectedTheme->selectedScheme->ncm.iBorderWidth = GetThemeSysSize(hTheme, SM_CXBORDER);
-	selectedTheme->selectedScheme->ncm.iScrollHeight = GetThemeSysSize(hTheme, SM_CXVSCROLL); // BUG BUG
-	selectedTheme->selectedScheme->ncm.iScrollWidth = GetThemeSysSize(hTheme, SM_CXVSCROLL);
-	selectedTheme->selectedScheme->ncm.iCaptionHeight = GetThemeSysSize(hTheme, SM_CYSIZE);
-	selectedTheme->selectedScheme->ncm.iCaptionWidth = GetThemeSysSize(hTheme, SM_CXSIZE);
-	selectedTheme->selectedScheme->ncm.iSmCaptionHeight = GetThemeSysSize(hTheme, SM_CYSMSIZE);
-	selectedTheme->selectedScheme->ncm.iSmCaptionWidth = GetThemeSysSize(hTheme, SM_CXSMSIZE);
-	selectedTheme->selectedScheme->ncm.iMenuHeight = GetThemeSysSize(hTheme, SM_CYMENUSIZE);
-	selectedTheme->selectedScheme->ncm.iMenuWidth = GetThemeSysSize(hTheme, SM_CXMENUSIZE);
-
-	UnScaleNonClientMetrics(selectedTheme->selectedScheme->ncm, dpi);
-	selectedTheme->selectedScheme->lfIconTitle.lfHeight = MulDiv(selectedTheme->selectedScheme->lfIconTitle.lfHeight, 96, dpi);
-
-	selectedTheme->selectedScheme->iPaddedBorderWidth = GetThemeSysSize(hTheme, SM_CXPADDEDBORDER);
-	CloseThemeData(hTheme);
-}
-
 void SetBitmap(HWND hWnd, HBITMAP hBmp)
 {
 	HBITMAP hOld = Static_SetBitmap(hWnd, hBmp);
-	DeleteBitmap(hBmp);
 	DeleteBitmap(hOld);
-}
-
-void UpdateCustomTheme()
-{
-	WCHAR szCustomThemePath[MAX_PATH];
-	ExpandEnvironmentStrings(L"%localappdata%\\Microsoft\\Windows\\Themes\\Custom.theme", szCustomThemePath, MAX_PATH);
-
-	DeleteFile(szCustomThemePath);
-	pThemeManager->Refresh();
 }

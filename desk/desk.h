@@ -1,6 +1,5 @@
 #pragma once
 #include "pch.h"
-#include "theme.h"
 
 // set a static to display a bitmap
 #define Static_SetBitmap(hwndCtl, hBmp)  \
@@ -74,40 +73,21 @@ struct THEMEINFO
 	bool fSlideshowSelection;
 };
 
-typedef struct tag_FONTINFO
-{
-	wchar_t** ppFontList;
-	UINT cFontList;
-} FONTINFO;
 
 // global HINSTANCE for the current app
 extern HINSTANCE g_hinst;
 
-// themeui instance
-extern HINSTANCE g_hThemeUI;
-
-// ThemeManager2 interface
-extern IThemeManager2* pThemeManager;
 
 // DesktopWallpaper (8+) interface
 extern IDesktopWallpaper* pDesktopWallpaper;
 
-// current theme's ITheme interface, defined as a IUnknown for wrapper
-// USAGE: ITheme* = new ITheme(currentITheme);
-extern IUnknown* currentITheme;
 
 // various theme information used across multiple pages
 // defined as a struct for convenience
 extern THEMEINFO* selectedTheme;
 
-// bool to keep track if the selection in wallpaper listview is programmatically done or not
-extern BOOL selectionPicker;
 
 // process information for the loaded screen saver preview
 // defined here so it can be killed by other pages
 extern PROCESS_INFORMATION pi;
 
-// font list
-extern FONTINFO* fontInfo;
-
-extern BOOL themeSelected;

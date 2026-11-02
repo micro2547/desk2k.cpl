@@ -6,8 +6,6 @@
 
 namespace
 {
-	const WCHAR appearanceKey[] = L"Control Panel\\Appearance";
-	const WCHAR schemesKey[] = L"Control Panel\\Appearance\\Schemes";
 	struct SaveName { WCHAR text[100]; };
 	INT_PTR CALLBACK SaveSchemeProc(HWND dialog, UINT message, WPARAM wParam, LPARAM lParam)
 	{
@@ -104,11 +102,9 @@ LRESULT CAppearanceDlgProc::OnInitDialog(UINT, WPARAM, LPARAM, BOOL&)
 	appliedDesktopColor = selectedTheme->newColor;
 	selectedTheme->selectedScheme = &scheme;
 	selectedTheme->szMsstylePath = L"(classic)";
-	WCHAR current[100] = {};
-	DWORD bytes = sizeof(current);
-	if (RegGetValue(HKEY_CURRENT_USER, appearanceKey, L"Current", RRF_RT_REG_SZ, nullptr, current, &bytes) == ERROR_SUCCESS)
-		schemeName = current;
-	lastName = schemeName;
+	result = GetCurrentAppearanceScheme(schemeName);
+	if (result != ERROR_SUCCESS) Error(4322, result);
+	lastName = schemeName.name;
 	PopulateSchemes();
 	initialized = editor.Initialize(m_hWnd);
 	if (!initialized) Error(4321, ERROR_INVALID_DATA);
@@ -122,31 +118,18 @@ void CAppearanceDlgProc::PopulateSchemes()
 	registryNames.clear();
 	int current = ComboBox_AddString(combo, ResourceText(2004).c_str());
 	ComboBox_SetItemData(combo, current, 0); // Unnamed, currently edited configuration.
-	HKEY key = nullptr;
-	LSTATUS status = RegOpenKeyEx(HKEY_CURRENT_USER, schemesKey, 0, KEY_QUERY_VALUE, &key);
-	if (status == ERROR_SUCCESS)
+	DWORD result = EnumerateAppearanceSchemes(registryNames);
+	if (result != ERROR_SUCCESS) Error(4322, result);
+	for (size_t index = 0; index < registryNames.size(); ++index)
 	{
-		for (DWORD index = 0;; ++index)
-		{
-			WCHAR name[16384] = {};
-			DWORD length = ARRAYSIZE(name), type = 0;
-			status = RegEnumValue(key, index, name, &length, nullptr, &type, nullptr, nullptr);
-			if (status == ERROR_NO_MORE_ITEMS) break;
-			if (status != ERROR_SUCCESS) { Error(4322, status); break; }
-			if (type == REG_BINARY)
-			{
-				WCHAR display[256] = {};
-				LPCWSTR label = name;
-				if (name[0] == L'@' && SUCCEEDED(SHLoadIndirectString(name, display, ARRAYSIZE(display), nullptr)))
-					label = display;
-				registryNames.emplace_back(name);
-				int item = ComboBox_AddString(combo, label);
-				ComboBox_SetItemData(combo, item, registryNames.size() + 1);
-			}
-		}
-		RegCloseKey(key);
+		const auto& name = registryNames[index];
+		WCHAR display[256] = {};
+		std::wstring label = name.name;
+		if (name.name[0] == L'@' && SUCCEEDED(SHLoadIndirectString(name.name.c_str(), display, ARRAYSIZE(display), nullptr)))
+			label = display;
+		int item = ComboBox_AddString(combo, label.c_str());
+		ComboBox_SetItemData(combo, item, index + 2);
 	}
-	else if (status != ERROR_FILE_NOT_FOUND) Error(4322, status);
 	std::wstring standard = ResourceText(2005);
 	if (ComboBox_FindStringExact(combo, -1, standard.c_str()) == CB_ERR)
 	{
@@ -160,21 +143,22 @@ void CAppearanceDlgProc::SelectSchemeName()
 {
 	HWND combo = GetDlgItem(1114);
 	int index = CB_ERR;
-	const std::wstring standard = ResourceText(2005);
+	const AppearanceSchemeName builtIn{AppearanceSchemeStore::BuiltIn, ResourceText(2005), L""};
 	for (int item = 0; item < ComboBox_GetCount(combo); ++item)
 	{
 		ULONG_PTR data = ComboBox_GetItemData(combo, item);
 		if (data == 0)
 		{
-			if (schemeName.empty()) { index = item; break; }
+			if (schemeName.name.empty()) { index = item; break; }
 			continue;
 		}
-		const std::wstring& name = data == 1 ? standard : registryNames[data - 2];
-		if (lstrcmpi(name.c_str(), schemeName.c_str()) == 0) { index = item; break; }
+		const AppearanceSchemeName& name = data == 1 ? builtIn : registryNames[data - 2];
+		if (name.store == schemeName.store && lstrcmpi(name.name.c_str(), schemeName.name.c_str()) == 0 &&
+			lstrcmpi(name.size.c_str(), schemeName.size.c_str()) == 0) { index = item; break; }
 	}
 	if (index == CB_ERR)
 	{
-		schemeName.clear();
+		schemeName.name.clear();
 		for (int item = 0; item < ComboBox_GetCount(combo); ++item)
 			if (ComboBox_GetItemData(combo, item) == 0) { index = item; break; }
 	}
@@ -188,19 +172,18 @@ LRESULT CAppearanceDlgProc::OnScheme(WORD, WORD, HWND combo, BOOL&)
 	int index = ComboBox_GetCurSel(combo);
 	if (index == CB_ERR) return 0;
 	ULONG_PTR data = ComboBox_GetItemData(combo, index);
-	std::wstring name = data == 0 ? std::wstring() : data == 1 ? ResourceText(2005) : registryNames[data - 2];
+	AppearanceSchemeName name = data == 0 ? AppearanceSchemeName{} : data == 1 ?
+		AppearanceSchemeName{AppearanceSchemeStore::BuiltIn, ResourceText(2005), L""} : registryNames[data - 2];
 	SCHEMEDATA candidate = scheme;
 	DWORD result = ERROR_SUCCESS;
 	if (data == 0) result = CaptureAppearanceScheme(candidate);
 	else if (data == 1) StandardScheme(candidate);
-	else result = LoadAppearanceScheme(name.c_str(), candidate);
+	else result = LoadAppearanceScheme(name, candidate);
 	if (result != ERROR_SUCCESS) { Error(4322, result); SelectSchemeName(); return 0; }
 	scheme = candidate;
 	selectedTheme->newColor = scheme.rgb[COLOR_DESKTOP];
 	schemeName = name;
-	WCHAR displayName[100] = {};
-	::GetWindowTextW(combo, displayName, ARRAYSIZE(displayName));
-	lastName = displayName;
+	lastName = name.name;
 	SelectSchemeName();
 	editor.Refresh();
 	Modified();
@@ -216,14 +199,18 @@ LRESULT CAppearanceDlgProc::OnSave(WORD, WORD, HWND, BOOL&)
 		reinterpret_cast<LPARAM>(&name));
 	if (dialogResult == -1) { Error(4323, GetLastError()); return 0; }
 	if (dialogResult != IDOK) return 0;
-	DWORD existingBytes = 0;
-	LSTATUS exists = RegGetValue(HKEY_CURRENT_USER, schemesKey, name.text, RRF_RT_REG_BINARY,
-		nullptr, nullptr, &existingBytes);
+	AppearanceSchemeName target = schemeName;
+	target.name = name.text;
+	if (target.store == AppearanceSchemeStore::BuiltIn) target.store = AppearanceSchemeStore::Legacy;
+	if (target.store == AppearanceSchemeStore::Classic && target.size.empty()) target.size = L"Normal";
+	DWORD exists = AppearanceSchemeExists(target);
+	if (exists != ERROR_SUCCESS && exists != ERROR_FILE_NOT_FOUND) { Error(4323, exists); return 0; }
 	if (exists == ERROR_SUCCESS &&
 		MessageBox(ResourceText(4327).c_str(), ResourceText(4320).c_str(), MB_YESNO | MB_ICONQUESTION) != IDYES) return 0;
-	DWORD result = SaveAppearanceScheme(name.text, scheme);
+	DWORD result = SaveAppearanceScheme(target, scheme);
 	if (result != ERROR_SUCCESS) { Error(4323, result); return 0; }
-	schemeName = lastName = name.text;
+	schemeName = target;
+	lastName = name.text;
 	PopulateSchemes();
 	Modified();
 	return 0;
@@ -231,13 +218,11 @@ LRESULT CAppearanceDlgProc::OnSave(WORD, WORD, HWND, BOOL&)
 
 LRESULT CAppearanceDlgProc::OnDelete(WORD, WORD, HWND, BOOL&)
 {
-	if (schemeName.empty()) return 0;
+	if (schemeName.name.empty() || schemeName.store == AppearanceSchemeStore::BuiltIn) return 0;
 	if (MessageBox(ResourceText(4328).c_str(), ResourceText(4320).c_str(), MB_YESNO | MB_ICONQUESTION) != IDYES) return 0;
-	HKEY key = nullptr;
-	LSTATUS result = RegOpenKeyEx(HKEY_CURRENT_USER, schemesKey, 0, KEY_SET_VALUE, &key);
-	if (result == ERROR_SUCCESS) { result = RegDeleteValue(key, schemeName.c_str()); RegCloseKey(key); }
+	DWORD result = DeleteAppearanceScheme(schemeName);
 	if (result != ERROR_SUCCESS) { Error(4324, result); return 0; }
-	schemeName.clear();
+	schemeName.name.clear();
 	PopulateSchemes();
 	Modified();
 	return 0;
@@ -247,7 +232,7 @@ LRESULT CAppearanceDlgProc::OnEditor(WORD code, WORD id, HWND, BOOL&)
 {
 	if (initialized && editor.OnCommand(id, code))
 	{
-		schemeName.clear();
+		schemeName.name.clear();
 		SelectSchemeName();
 		Modified();
 	}
@@ -299,16 +284,7 @@ int CAppearanceDlgProc::OnApply()
 		if (SUCCEEDED(hr)) hr = view->SetViewModeAndIconSize(mode, editor.iconSize);
 		if (FAILED(hr)) { Error(4325, HRESULT_CODE(hr)); return PSNRET_INVALID_NOCHANGEPAGE; }
 	}
-	HKEY key = nullptr;
-	LSTATUS status = RegCreateKeyEx(HKEY_CURRENT_USER, appearanceKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr);
-	if (status == ERROR_SUCCESS)
-	{
-		status = schemeName.empty() ? RegDeleteValue(key, L"Current") :
-			RegSetValueEx(key, L"Current", 0, REG_SZ, reinterpret_cast<const BYTE*>(schemeName.c_str()),
-				static_cast<DWORD>((schemeName.size() + 1) * sizeof(WCHAR)));
-		if (status == ERROR_FILE_NOT_FOUND && schemeName.empty()) status = ERROR_SUCCESS;
-		RegCloseKey(key);
-	}
+	DWORD status = SetCurrentAppearanceScheme(schemeName);
 	if (status != ERROR_SUCCESS) { Error(4325, status); return PSNRET_INVALID_NOCHANGEPAGE; }
 	appliedDesktopColor = selectedTheme->newColor;
 	appliedIconMetrics = editor.iconMetrics;

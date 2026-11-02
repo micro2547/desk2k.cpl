@@ -137,6 +137,145 @@ void NcUpdateSystemMetrics(int nIndex, int value)
 
 namespace
 {
+	const WCHAR appearanceKey[] = L"Control Panel\\Appearance";
+	const WCHAR legacySchemesKey[] = L"Control Panel\\Appearance\\Schemes";
+	const WCHAR classicSchemesKey[] = L"Control Panel\\Appearance\\ClassicSchemes";
+
+	std::wstring ClassicSchemePath(const AppearanceSchemeName& name, bool includeSize)
+	{
+		std::wstring path = std::wstring(classicSchemesKey) + L"\\" + name.name;
+		if (includeSize) path += L"\\" + name.size;
+		return path;
+	}
+
+	bool ValidFont(const LOGFONTW& font)
+	{
+		for (WCHAR character : font.lfFaceName)
+			if (character == L'\0') return true;
+		return false;
+	}
+
+	DWORD ReadRegistryString(LPCWSTR key, LPCWSTR value, std::wstring& text)
+	{
+		DWORD bytes = 0;
+		LSTATUS status = RegGetValue(HKEY_CURRENT_USER, key, value, RRF_RT_REG_SZ, nullptr, nullptr, &bytes);
+		if (status != ERROR_SUCCESS) return status;
+		std::vector<WCHAR> buffer(bytes / sizeof(WCHAR) + 1);
+		status = RegGetValue(HKEY_CURRENT_USER, key, value, RRF_RT_REG_SZ, nullptr, buffer.data(), &bytes);
+		if (status == ERROR_SUCCESS) text = buffer.data();
+		return status;
+	}
+
+	DWORD WriteRegistryString(LPCWSTR path, LPCWSTR value, const std::wstring& text)
+	{
+		HKEY key = nullptr;
+		LSTATUS status = RegCreateKeyEx(HKEY_CURRENT_USER, path, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr);
+		if (status != ERROR_SUCCESS) return status;
+		status = text.empty() ? RegDeleteValue(key, value) :
+			RegSetValueEx(key, value, 0, REG_SZ, reinterpret_cast<const BYTE*>(text.c_str()),
+				static_cast<DWORD>((text.size() + 1) * sizeof(WCHAR)));
+		RegCloseKey(key);
+		return status == ERROR_FILE_NOT_FOUND && text.empty() ? ERROR_SUCCESS : status;
+	}
+
+	DWORD LoadClassicScheme(const AppearanceSchemeName& name, SCHEMEDATA& scheme)
+	{
+		HKEY colors = nullptr, sizes = nullptr;
+		LSTATUS status = RegOpenKeyEx(HKEY_CURRENT_USER, ClassicSchemePath(name, false).c_str(),
+			0, KEY_QUERY_VALUE, &colors);
+		if (status != ERROR_SUCCESS) return status;
+		status = RegOpenKeyEx(HKEY_CURRENT_USER, ClassicSchemePath(name, true).c_str(),
+			0, KEY_QUERY_VALUE, &sizes);
+		if (status != ERROR_SUCCESS) { RegCloseKey(colors); return status; }
+		// Like WinClassicThemeConfig, missing values retain the current system
+		// setting, not the previously selected scheme's setting. Values are 96-DPI.
+		status = CaptureAppearanceScheme(scheme);
+		if (status == ERROR_SUCCESS)
+		{
+			WCHAR value[16];
+			DWORD data, bytes;
+			for (int index = 0; index < MAX_COLORS; ++index)
+			{
+				StringCchPrintf(value, ARRAYSIZE(value), L"Color%d", index);
+				bytes = sizeof(data);
+				if (RegGetValue(colors, nullptr, value, RRF_RT_REG_DWORD, nullptr, &data, &bytes) == ERROR_SUCCESS)
+					scheme.rgb[index] = data & 0x00ffffff;
+			}
+			LOGFONTW* fonts[] = {&scheme.ncm.lfCaptionFont, &scheme.ncm.lfSmCaptionFont,
+				&scheme.ncm.lfMenuFont, &scheme.ncm.lfStatusFont, &scheme.ncm.lfMessageFont, &scheme.lfIconTitle};
+			for (int index = 0; index < ARRAYSIZE(fonts); ++index)
+			{
+				StringCchPrintf(value, ARRAYSIZE(value), L"Font%d", index);
+				LOGFONTW font = {};
+				bytes = sizeof(font);
+				if (RegGetValue(sizes, nullptr, value, RRF_RT_REG_BINARY, nullptr, &font, &bytes) == ERROR_SUCCESS &&
+					bytes == sizeof(font) && ValidFont(font))
+					*fonts[index] = font;
+			}
+			int* metrics[] = {&scheme.ncm.iBorderWidth, &scheme.ncm.iScrollWidth, &scheme.ncm.iScrollHeight,
+				&scheme.ncm.iCaptionWidth, &scheme.ncm.iCaptionHeight, &scheme.ncm.iSmCaptionWidth,
+				&scheme.ncm.iSmCaptionHeight, &scheme.ncm.iMenuWidth, &scheme.ncm.iMenuHeight,
+				&scheme.iPaddedBorderWidth};
+			for (int index = 0; index < ARRAYSIZE(metrics); ++index)
+			{
+				StringCchPrintf(value, ARRAYSIZE(value), L"Size%d", index);
+				bytes = sizeof(data);
+				if (RegGetValue(sizes, nullptr, value, RRF_RT_REG_DWORD, nullptr, &data, &bytes) == ERROR_SUCCESS &&
+					static_cast<int>(data) >= 0)
+					*metrics[index] = static_cast<int>(data);
+			}
+		}
+		RegCloseKey(sizes);
+		RegCloseKey(colors);
+		return status;
+	}
+
+	DWORD SaveClassicScheme(const AppearanceSchemeName& name, const SCHEMEDATA& scheme)
+	{
+		if (name.name.empty() || name.size.empty() || name.name.find(L'\\') != std::wstring::npos ||
+			name.size.find(L'\\') != std::wstring::npos) return ERROR_INVALID_NAME;
+		HKEY colors = nullptr, sizes = nullptr;
+		LSTATUS status = RegCreateKeyEx(HKEY_CURRENT_USER, ClassicSchemePath(name, false).c_str(),
+			0, nullptr, 0, KEY_SET_VALUE, nullptr, &colors, nullptr);
+		if (status != ERROR_SUCCESS) return status;
+		status = RegCreateKeyEx(HKEY_CURRENT_USER, ClassicSchemePath(name, true).c_str(),
+			0, nullptr, 0, KEY_SET_VALUE, nullptr, &sizes, nullptr);
+		if (status == ERROR_SUCCESS)
+		{
+			WCHAR value[16];
+			for (int index = 0; index < MAX_COLORS && status == ERROR_SUCCESS; ++index)
+			{
+				StringCchPrintf(value, ARRAYSIZE(value), L"Color%d", index);
+				status = RegSetValueEx(colors, value, 0, REG_DWORD,
+					reinterpret_cast<const BYTE*>(&scheme.rgb[index]), sizeof(COLORREF));
+			}
+			const LOGFONTW* fonts[] = {&scheme.ncm.lfCaptionFont, &scheme.ncm.lfSmCaptionFont,
+				&scheme.ncm.lfMenuFont, &scheme.ncm.lfStatusFont, &scheme.ncm.lfMessageFont, &scheme.lfIconTitle};
+			for (int index = 0; index < ARRAYSIZE(fonts) && status == ERROR_SUCCESS; ++index)
+			{
+				StringCchPrintf(value, ARRAYSIZE(value), L"Font%d", index);
+				LOGFONTW font = *fonts[index];
+				if (!ValidFont(font)) { status = ERROR_INVALID_DATA; break; }
+				size_t length = wcslen(font.lfFaceName) + 1;
+				ZeroMemory(font.lfFaceName + length, (LF_FACESIZE - length) * sizeof(WCHAR));
+				status = RegSetValueEx(sizes, value, 0, REG_BINARY,
+					reinterpret_cast<const BYTE*>(&font), sizeof(font));
+			}
+			const int* metrics[] = {&scheme.ncm.iBorderWidth, &scheme.ncm.iScrollWidth, &scheme.ncm.iScrollHeight,
+				&scheme.ncm.iCaptionWidth, &scheme.ncm.iCaptionHeight, &scheme.ncm.iSmCaptionWidth,
+				&scheme.ncm.iSmCaptionHeight, &scheme.ncm.iMenuWidth, &scheme.ncm.iMenuHeight,
+				&scheme.iPaddedBorderWidth};
+			for (int index = 0; index < ARRAYSIZE(metrics) && status == ERROR_SUCCESS; ++index)
+			{
+				StringCchPrintf(value, ARRAYSIZE(value), L"Size%d", index);
+				DWORD data = static_cast<DWORD>(*metrics[index]);
+				status = RegSetValueEx(sizes, value, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&data), sizeof(data));
+			}
+			RegCloseKey(sizes);
+		}
+		RegCloseKey(colors);
+		return status;
+	}
 	// The Windows 2000 layout uses a WORD version followed by alignment padding.
 	// Do not persist SCHEMEDATA's preview/runtime fields.
 	struct STORED_SCHEME
@@ -156,10 +295,7 @@ namespace
 		for (const LOGFONTW* font : {&stored.metrics.lfCaptionFont, &stored.metrics.lfSmCaptionFont,
 			&stored.metrics.lfMenuFont, &stored.metrics.lfStatusFont, &stored.metrics.lfMessageFont, &stored.iconFont})
 		{
-			bool terminated = false;
-			for (WCHAR character : font->lfFaceName)
-				if (character == L'\0') { terminated = true; break; }
-			if (!terminated) return false;
+			if (!ValidFont(*font)) return false;
 		}
 		return true;
 	}
@@ -193,12 +329,14 @@ DWORD CaptureAppearanceScheme(SCHEMEDATA& scheme)
 	return ERROR_SUCCESS;
 }
 
-DWORD LoadAppearanceScheme(LPCWSTR name, SCHEMEDATA& scheme)
+DWORD LoadAppearanceScheme(const AppearanceSchemeName& name, SCHEMEDATA& scheme)
 {
+	if (name.store == AppearanceSchemeStore::Classic) return LoadClassicScheme(name, scheme);
+	if (name.store != AppearanceSchemeStore::Legacy) return ERROR_INVALID_PARAMETER;
 	STORED_SCHEME stored = {};
 	DWORD size = sizeof(stored), type = 0;
-	LSTATUS status = RegGetValue(HKEY_CURRENT_USER, L"Control Panel\\Appearance\\Schemes",
-		name, RRF_RT_REG_BINARY, &type, &stored, &size);
+	LSTATUS status = RegGetValue(HKEY_CURRENT_USER, legacySchemesKey,
+		name.name.c_str(), RRF_RT_REG_BINARY, &type, &stored, &size);
 	if (status == ERROR_MORE_DATA) return ERROR_INVALID_DATA;
 	if (status != ERROR_SUCCESS) return status;
 	// NT 4 schemes have 25 colors; Windows 2000 and our saved schemes have 29.
@@ -227,8 +365,10 @@ DWORD LoadAppearanceScheme(LPCWSTR name, SCHEMEDATA& scheme)
 	return ERROR_SUCCESS;
 }
 
-DWORD SaveAppearanceScheme(LPCWSTR name, const SCHEMEDATA& scheme)
+DWORD SaveAppearanceScheme(const AppearanceSchemeName& name, const SCHEMEDATA& scheme)
 {
+	if (name.store == AppearanceSchemeStore::Classic) return SaveClassicScheme(name, scheme);
+	if (name.store != AppearanceSchemeStore::Legacy || name.name.empty()) return ERROR_INVALID_PARAMETER;
 	STORED_SCHEME stored = {};
 	stored.version = 2;
 	stored.metrics = scheme.ncm;
@@ -236,15 +376,157 @@ DWORD SaveAppearanceScheme(LPCWSTR name, const SCHEMEDATA& scheme)
 	stored.iconFont = scheme.lfIconTitle;
 	memcpy(stored.colors, scheme.rgb, sizeof(stored.colors));
 	HKEY key = nullptr;
-	LSTATUS status = RegCreateKeyEx(HKEY_CURRENT_USER, L"Control Panel\\Appearance\\Schemes",
+	LSTATUS status = RegCreateKeyEx(HKEY_CURRENT_USER, legacySchemesKey,
 		0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr);
 	if (status == ERROR_SUCCESS)
 	{
-		status = RegSetValueEx(key, name, 0, REG_BINARY,
+		status = RegSetValueEx(key, name.name.c_str(), 0, REG_BINARY,
 			reinterpret_cast<const BYTE*>(&stored), sizeof(stored));
 		RegCloseKey(key);
 	}
 	return status;
+}
+
+DWORD EnumerateAppearanceSchemes(std::vector<AppearanceSchemeName>& names)
+{
+	names.clear();
+	HKEY key = nullptr;
+	LSTATUS status = RegOpenKeyEx(HKEY_CURRENT_USER, legacySchemesKey, 0, KEY_QUERY_VALUE, &key);
+	if (status == ERROR_SUCCESS)
+	{
+		for (DWORD index = 0;; ++index)
+		{
+			WCHAR value[16384];
+			DWORD length = ARRAYSIZE(value), type = 0;
+			status = RegEnumValue(key, index, value, &length, nullptr, &type, nullptr, nullptr);
+			if (status != ERROR_SUCCESS) break;
+			if (type == REG_BINARY) names.push_back({AppearanceSchemeStore::Legacy, value, L""});
+		}
+		RegCloseKey(key);
+		if (status != ERROR_NO_MORE_ITEMS) return status;
+	}
+	else if (status != ERROR_FILE_NOT_FOUND) return status;
+	status = RegOpenKeyEx(HKEY_CURRENT_USER, classicSchemesKey, 0, KEY_ENUMERATE_SUB_KEYS, &key);
+	if (status == ERROR_FILE_NOT_FOUND) return ERROR_SUCCESS;
+	if (status != ERROR_SUCCESS) return status;
+	for (DWORD index = 0;; ++index)
+	{
+		WCHAR scheme[256];
+		DWORD length = ARRAYSIZE(scheme);
+		status = RegEnumKeyEx(key, index, scheme, &length, nullptr, nullptr, nullptr, nullptr);
+		if (status != ERROR_SUCCESS) break;
+		HKEY schemeKey = nullptr;
+		status = RegOpenKeyEx(key, scheme, 0, KEY_ENUMERATE_SUB_KEYS, &schemeKey);
+		if (status != ERROR_SUCCESS) break;
+		for (DWORD sizeIndex = 0;; ++sizeIndex)
+		{
+			WCHAR size[256];
+			length = ARRAYSIZE(size);
+			status = RegEnumKeyEx(schemeKey, sizeIndex, size, &length, nullptr, nullptr, nullptr, nullptr);
+			if (status != ERROR_SUCCESS) break;
+			names.push_back({AppearanceSchemeStore::Classic, scheme, size});
+		}
+		RegCloseKey(schemeKey);
+		if (status != ERROR_NO_MORE_ITEMS) break;
+	}
+	RegCloseKey(key);
+	return status == ERROR_NO_MORE_ITEMS ? ERROR_SUCCESS : status;
+}
+
+DWORD AppearanceSchemeExists(const AppearanceSchemeName& name)
+{
+	if (name.store == AppearanceSchemeStore::Legacy)
+	{
+		DWORD bytes = 0;
+		return RegGetValue(HKEY_CURRENT_USER, legacySchemesKey, name.name.c_str(),
+			RRF_RT_ANY, nullptr, nullptr, &bytes);
+	}
+	if (name.store != AppearanceSchemeStore::Classic) return ERROR_INVALID_PARAMETER;
+	HKEY key = nullptr;
+	LSTATUS status = RegOpenKeyEx(HKEY_CURRENT_USER, ClassicSchemePath(name, false).c_str(),
+		0, KEY_QUERY_VALUE, &key);
+	if (status == ERROR_SUCCESS) RegCloseKey(key);
+	return status;
+}
+
+DWORD DeleteAppearanceScheme(const AppearanceSchemeName& name)
+{
+	HKEY key = nullptr;
+	if (name.store == AppearanceSchemeStore::Legacy)
+	{
+		LSTATUS status = RegOpenKeyEx(HKEY_CURRENT_USER, legacySchemesKey, 0, KEY_SET_VALUE, &key);
+		if (status == ERROR_SUCCESS)
+		{
+			status = RegDeleteValue(key, name.name.c_str());
+			RegCloseKey(key);
+		}
+		return status;
+	}
+	if (name.store != AppearanceSchemeStore::Classic || name.name.empty() || name.size.empty())
+		return ERROR_INVALID_PARAMETER;
+	std::wstring path = ClassicSchemePath(name, false);
+	LSTATUS status = RegOpenKeyEx(HKEY_CURRENT_USER, path.c_str(), 0, KEY_READ | KEY_WRITE, &key);
+	if (status != ERROR_SUCCESS) return status;
+	status = RegDeleteTree(key, name.size.c_str());
+	DWORD subkeys = 0;
+	if (status == ERROR_SUCCESS)
+	{
+		std::wstring selectedSize;
+		if (ReadRegistryString(path.c_str(), L"SelectedSize", selectedSize) == ERROR_SUCCESS &&
+			lstrcmpi(selectedSize.c_str(), name.size.c_str()) == 0)
+			RegDeleteValue(key, L"SelectedSize");
+		status = RegQueryInfoKey(key, nullptr, nullptr, nullptr, &subkeys, nullptr, nullptr,
+			nullptr, nullptr, nullptr, nullptr, nullptr);
+	}
+	RegCloseKey(key);
+	if (status == ERROR_SUCCESS && subkeys == 0)
+		status = RegDeleteTree(HKEY_CURRENT_USER, path.c_str());
+	return status;
+}
+
+DWORD GetCurrentAppearanceScheme(AppearanceSchemeName& name)
+{
+	name = {};
+	DWORD status = ReadRegistryString(appearanceKey, L"Current", name.name);
+	if (status == ERROR_SUCCESS && !name.name.empty()) return ERROR_SUCCESS;
+	if (status != ERROR_SUCCESS && status != ERROR_FILE_NOT_FOUND) return status;
+	name.store = AppearanceSchemeStore::Classic;
+	status = ReadRegistryString(classicSchemesKey, L"SelectedScheme", name.name);
+	if (status == ERROR_FILE_NOT_FOUND) { name = {}; return ERROR_SUCCESS; }
+	if (status != ERROR_SUCCESS) return status;
+	std::wstring path = ClassicSchemePath(name, false);
+	status = ReadRegistryString(path.c_str(), L"SelectedSize", name.size);
+	if (status == ERROR_FILE_NOT_FOUND)
+	{
+		HKEY key = nullptr;
+		status = RegOpenKeyEx(HKEY_CURRENT_USER, path.c_str(), 0, KEY_ENUMERATE_SUB_KEYS, &key);
+		if (status == ERROR_SUCCESS)
+		{
+			WCHAR size[256];
+			DWORD length = ARRAYSIZE(size);
+			status = RegEnumKeyEx(key, 0, size, &length, nullptr, nullptr, nullptr, nullptr);
+			if (status == ERROR_SUCCESS) name.size = size;
+			RegCloseKey(key);
+		}
+	}
+	if (status == ERROR_FILE_NOT_FOUND || status == ERROR_NO_MORE_ITEMS) { name = {}; return ERROR_SUCCESS; }
+	return status;
+}
+
+DWORD SetCurrentAppearanceScheme(const AppearanceSchemeName& name)
+{
+	// Use the native selection values for each store. Clearing the other store's
+	// selection prevents identical names from resolving to the wrong source.
+	const bool classic = name.store == AppearanceSchemeStore::Classic && !name.name.empty();
+	const bool legacy = name.store == AppearanceSchemeStore::Legacy && !name.name.empty();
+	DWORD status = WriteRegistryString(appearanceKey, L"Current", legacy ? name.name : std::wstring());
+	if (status != ERROR_SUCCESS) return status;
+	if (classic)
+	{
+		status = WriteRegistryString(ClassicSchemePath(name, false).c_str(), L"SelectedSize", name.size);
+		if (status != ERROR_SUCCESS) return status;
+	}
+	return WriteRegistryString(classicSchemesKey, L"SelectedScheme", classic ? name.name : std::wstring());
 }
 
 DWORD ApplyAppearanceScheme(const SCHEMEDATA& scheme)

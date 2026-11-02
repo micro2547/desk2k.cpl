@@ -43,7 +43,6 @@
 #define IDC_WEB_PROPERTIES             4122
 #define IDD_APPEARANCE_COLOR_PALETTE    4330
 #define IDC_APPEARANCE_PALETTE_GRID     4331
-#define IDC_APPEARANCE_PALETTE_CURRENT  4332
 #define IDC_APPEARANCE_PALETTE_OTHER    4333
 #define IDD_BACKGROUND_PATTERNS         6200
 #define IDD_BACKGROUND_PATTERN_EDITOR   6201
@@ -76,6 +75,9 @@
 #define IDS_BACKGROUND_DIAGONAL         6228
 #define IDS_BACKGROUND_WEAVE            6229
 #define IDI_BACKGROUND_NONE             6230
+#define IDS_BACKGROUND_FIT              6231
+#define IDS_BACKGROUND_FILL             6232
+#define IDS_BACKGROUND_SPAN             6233
 
 // Next default values for new objects
 // 

@@ -12,7 +12,7 @@ namespace
 		SetWindowTextW(combo, text);
 	}
 
-	// The four-column palette and the extra current-color square follow colorpic.c.
+	// Keep the four-column palette captionless, without a current-color square.
 	// Keep this a native modal popup: the scheme changes only after it returns IDOK.
 	struct AppearanceColorPalette
 	{
@@ -40,19 +40,17 @@ namespace
 
 		void Select(HWND dialog, int index)
 		{
-			int id = index < 0 ? IDC_APPEARANCE_PALETTE_OTHER :
-				index == 20 ? IDC_APPEARANCE_PALETTE_CURRENT : IDC_APPEARANCE_PALETTE_GRID;
+			int id = index < 0 ? IDC_APPEARANCE_PALETTE_OTHER : IDC_APPEARANCE_PALETTE_GRID;
 			HWND control = GetDlgItem(dialog, id);
 			if (selected == index && GetFocus() == control) return;
 			selected = index;
 			SetFocus(control);
 			InvalidateRect(GetDlgItem(dialog, IDC_APPEARANCE_PALETTE_GRID), nullptr, FALSE);
-			InvalidateRect(GetDlgItem(dialog, IDC_APPEARANCE_PALETTE_CURRENT), nullptr, FALSE);
 		}
 
 		int HitTest(HWND dialog, POINT pt) const
 		{
-			for (int id : {IDC_APPEARANCE_PALETTE_GRID, IDC_APPEARANCE_PALETTE_CURRENT, IDC_APPEARANCE_PALETTE_OTHER})
+			for (int id : {IDC_APPEARANCE_PALETTE_GRID, IDC_APPEARANCE_PALETTE_OTHER})
 			{
 				HWND control = GetDlgItem(dialog, id);
 				if (!IsWindowVisible(control)) continue;
@@ -61,7 +59,6 @@ namespace
 				MapWindowPoints(nullptr, dialog, reinterpret_cast<POINT*>(&rect), 2);
 				if (!PtInRect(&rect, pt)) continue;
 				if (id == IDC_APPEARANCE_PALETTE_OTHER) return -1;
-				if (id == IDC_APPEARANCE_PALETTE_CURRENT) return 20;
 				return (pt.y - rect.top) / cell * 4 + (pt.x - rect.left) / cell;
 			}
 			return -2;
@@ -72,7 +69,7 @@ namespace
 			if (selected < 0) Finish(dialog, IDC_APPEARANCE_PALETTE_OTHER);
 			else
 			{
-				if (selected < 20) color = colors[selected];
+				color = colors[selected];
 				Finish(dialog, IDOK);
 			}
 		}
@@ -125,7 +122,6 @@ namespace
 				case VK_END: index = 19; break;
 				case VK_RETURN:
 				case VK_SPACE:
-					palette->selected = GetDlgCtrlID(hwnd) == IDC_APPEARANCE_PALETTE_CURRENT ? 20 : index;
 					palette->Accept(dialog);
 					return 0;
 				case VK_F4:
@@ -139,8 +135,7 @@ namespace
 			}
 			if (message == WM_SETFOCUS)
 			{
-				if (GetDlgCtrlID(hwnd) == IDC_APPEARANCE_PALETTE_CURRENT) palette->selected = 20;
-				else if (palette->selected < 0 || palette->selected >= 20) palette->selected = 0;
+				if (palette->selected < 0 || palette->selected >= 20) palette->selected = 0;
 			}
 			if (message == WM_SETFOCUS || message == WM_KILLFOCUS)
 				InvalidateRect(hwnd, nullptr, FALSE);
@@ -153,14 +148,12 @@ namespace
 			GetPaletteEntries(static_cast<HPALETTE>(GetStockObject(DEFAULT_PALETTE)), 8, 4, entries);
 			for (int i = 0; i < 4; ++i)
 				colors[16 + i] = RGB(entries[i].peRed, entries[i].peGreen, entries[i].peBlue);
-			selected = 20;
+			selected = 0;
 			for (int i = 0; i < 20; ++i)
 				if (colors[i] == color) { selected = i; break; }
 			HWND grid = GetDlgItem(dialog, IDC_APPEARANCE_PALETTE_GRID);
-			HWND current = GetDlgItem(dialog, IDC_APPEARANCE_PALETTE_CURRENT);
 			HWND other = GetDlgItem(dialog, IDC_APPEARANCE_PALETTE_OTHER);
-			// Use colorpic.c's resource-based sizing, including its localized
-			// font-width accommodation so Other never overlaps the current color.
+			// Retain resource-based sizing and room for the localized Other button.
 			RECT gridRect = {}, otherRect = {};
 			GetClientRect(grid, &gridRect);
 			GetWindowRect(other, &otherRect);
@@ -176,10 +169,7 @@ namespace
 			MapWindowPoints(nullptr, dialog, reinterpret_cast<POINT*>(&otherRect), 2);
 			SetWindowPos(other, nullptr, otherRect.left, bottomRow, RECTWIDTH(otherRect), cell,
 				SWP_NOACTIVATE | SWP_NOZORDER);
-			SetWindowPos(current, nullptr, gridRect.right - cell, bottomRow, cell, cell,
-				SWP_NOACTIVATE | SWP_NOZORDER);
 			SetWindowSubclass(grid, ColorKeyProc, 0, reinterpret_cast<DWORD_PTR>(this));
-			SetWindowSubclass(current, ColorKeyProc, 0, reinterpret_cast<DWORD_PTR>(this));
 			RECT bounds = {0, 0, cell * 4, bottomRow + cell + 1};
 			AdjustWindowRectEx(&bounds, GetWindowLong(dialog, GWL_STYLE), FALSE, GetWindowLong(dialog, GWL_EXSTYLE));
 			int width = RECTWIDTH(bounds), height = RECTHEIGHT(bounds);
@@ -231,8 +221,6 @@ namespace
 						palette->DrawSquare(draw->hDC, rect, palette->colors[i],
 							i == palette->selected && GetFocus() == draw->hwndItem);
 					}
-				else if (draw->CtlID == IDC_APPEARANCE_PALETTE_CURRENT)
-					palette->DrawSquare(draw->hDC, draw->rcItem, palette->color, GetFocus() == draw->hwndItem);
 				return TRUE;
 			}
 			case WM_MOUSEMOVE:
@@ -268,7 +256,6 @@ namespace
 				switch (LOWORD(wParam))
 				{
 				case IDC_APPEARANCE_PALETTE_OTHER: palette->Finish(dialog, IDC_APPEARANCE_PALETTE_OTHER); break;
-				case IDC_APPEARANCE_PALETTE_CURRENT: palette->selected = 20; palette->Accept(dialog); break;
 				case IDC_APPEARANCE_PALETTE_GRID:
 				case IDOK: palette->Accept(dialog); break;
 				case IDCANCEL: palette->Finish(dialog, IDCANCEL); break;

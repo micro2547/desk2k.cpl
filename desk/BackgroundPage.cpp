@@ -10,6 +10,60 @@ namespace
     const wchar_t kPatternsKey[] = L"Control Panel\\Patterns";
     const wchar_t kDesktopKey[] = L"Control Panel\\Desktop";
 
+    LRESULT CALLBACK BrowseDialogSubclass(HWND window, UINT message, WPARAM wParam,
+        LPARAM lParam, UINT_PTR subclassId, DWORD_PTR)
+    {
+        // The shell can assign its icon after activation. Keep the actual
+        // window icon empty rather than just hiding it in the nonclient frame.
+        if (message == WM_SETICON)
+            return DefSubclassProc(window, message, wParam, 0);
+        if (message == WM_NCDESTROY)
+            RemoveWindowSubclass(window, BrowseDialogSubclass, subclassId);
+        return DefSubclassProc(window, message, wParam, lParam);
+    }
+
+    LRESULT CALLBACK BrowseDialogHook(int code, WPARAM wParam, LPARAM lParam)
+    {
+        if (code == HCBT_ACTIVATE)
+        {
+            HWND window = reinterpret_cast<HWND>(wParam);
+            wchar_t className[32] = {};
+            GetClassNameW(window, className, ARRAYSIZE(className));
+            if (wcscmp(className, L"#32770") == 0)
+            {
+                SetWindowSubclass(window, BrowseDialogSubclass, 1, 0);
+                // Suppress explicit icons, as in no-properties-icon.wh.cpp,
+                // and the default/class icon fallback for the file dialog.
+                SetWindowLongPtrW(window, GWL_EXSTYLE,
+                    GetWindowLongPtrW(window, GWL_EXSTYLE) | WS_EX_DLGMODALFRAME);
+                SendMessageW(window, WM_SETICON, ICON_SMALL, 0);
+                SendMessageW(window, WM_SETICON, ICON_BIG, 0);
+                SetWindowPos(window, nullptr, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            }
+        }
+        return CallNextHookEx(nullptr, code, wParam, lParam);
+    }
+
+    class BrowseDialogIconScope
+    {
+        HHOOK m_hook = SetWindowsHookExW(WH_CBT, BrowseDialogHook, nullptr, GetCurrentThreadId());
+    public:
+        ~BrowseDialogIconScope() { if (m_hook) UnhookWindowsHookEx(m_hook); }
+    };
+
+    const wchar_t* WallpaperStyle(DESKTOP_WALLPAPER_POSITION position)
+    {
+        switch (position)
+        {
+        case DWPOS_STRETCH: return L"2";
+        case DWPOS_FIT: return L"6";
+        case DWPOS_FILL: return L"10";
+        case DWPOS_SPAN: return L"22";
+        default: return L"0";
+        }
+    }
+
     HRESULT SpiFailure()
     {
         DWORD error = GetLastError();
@@ -70,7 +124,7 @@ namespace
             // As in the original backdlg.c, persist placement before asking USER to reload it.
             status = WriteWallpaperSetting(key, L"TileWallpaper", position == DWPOS_TILE ? L"1" : L"0");
             if (status == ERROR_SUCCESS)
-                status = WriteWallpaperSetting(key, L"WallpaperStyle", position == DWPOS_STRETCH ? L"2" : L"0");
+                status = WriteWallpaperSetting(key, L"WallpaperStyle", WallpaperStyle(position));
             if (status != ERROR_SUCCESS)
             {
                 RestoreWallpaperSetting(key, L"TileWallpaper", oldTile);
@@ -547,7 +601,13 @@ namespace
         }
     };
 
-    const DESKTOP_WALLPAPER_POSITION kPositions[] = { DWPOS_CENTER, DWPOS_TILE, DWPOS_STRETCH };
+    const DESKTOP_WALLPAPER_POSITION kPositions[] = {
+        DWPOS_CENTER, DWPOS_TILE, DWPOS_STRETCH, DWPOS_FIT, DWPOS_FILL, DWPOS_SPAN
+    };
+    const UINT kPositionLabels[] = {
+        IDS_BACKGROUND_CENTER, IDS_BACKGROUND_TILE, IDS_BACKGROUND_STRETCH,
+        IDS_BACKGROUND_FIT, IDS_BACKGROUND_FILL, IDS_BACKGROUND_SPAN
+    };
 }
 
 BOOL CBackgroundDlgProc::OnInitDialog(UINT, WPARAM, LPARAM, BOOL&)
@@ -584,9 +644,9 @@ BOOL CBackgroundDlgProc::OnInitDialog(UINT, WPARAM, LPARAM, BOOL&)
     m_wallpaper = wallpaper;
     for (int i = 0; i < ARRAYSIZE(kPositions); ++i)
     {
-        ComboBox_AddString(GetDlgItem(1205), Text(IDS_BACKGROUND_CENTER + i).c_str());
+        ComboBox_AddString(GetDlgItem(1205), Text(kPositionLabels[i]).c_str());
     }
-    // Keep unsupported host modes intact until the user explicitly selects a classic mode.
+    // Preserve the current selection until the user explicitly changes placement.
     int index = AddWallpaper(m_wallpaper);
     ListView_SetItemState(m_wallpaperList, index, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
     // Keep the explicit no-wallpaper choice visible, even when the current file is farther down.
@@ -684,6 +744,7 @@ BOOL CBackgroundDlgProc::OnPositionChange(UINT, UINT, HWND, BOOL&)
 
 BOOL CBackgroundDlgProc::OnBrowse(UINT, UINT, HWND, BOOL&)
 {
+    BrowseDialogIconScope hideIcon;
     Microsoft::WRL::ComPtr<IFileOpenDialog> dialog;
     HRESULT result = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
     std::wstring path;
@@ -931,10 +992,24 @@ void CBackgroundDlgProc::UpdatePreview()
                     bounds.Y + (bounds.Height - imageHeight) / 2, imageWidth, imageHeight));
             else
             {
-                double scale = m_position == DWPOS_FIT ? (std::min)(double(bounds.Width) / m_picture->GetWidth(), double(bounds.Height) / m_picture->GetHeight()) :
-                    (std::max)(double(bounds.Width) / m_picture->GetWidth(), double(bounds.Height) / m_picture->GetHeight());
-                int cx = static_cast<int>(m_picture->GetWidth() * scale), cy = static_cast<int>(m_picture->GetHeight() * scale);
-                graphics.DrawImage(m_picture.get(), Gdiplus::Rect(bounds.X + (bounds.Width - cx) / 2, bounds.Y + (bounds.Height - cy) / 2, cx, cy));
+                // Span fills the virtual desktop; preview its primary-screen portion.
+                const bool span = m_position == DWPOS_SPAN;
+                const int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+                const int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+                const int canvasWidth = span ? GetSystemMetrics(SM_CXVIRTUALSCREEN) : screenWidth;
+                const int canvasHeight = span ? GetSystemMetrics(SM_CYVIRTUALSCREEN) : screenHeight;
+                const double scaleX = double(canvasWidth) / m_picture->GetWidth();
+                const double scaleY = double(canvasHeight) / m_picture->GetHeight();
+                const double scale = m_position == DWPOS_FIT ? (std::min)(scaleX, scaleY) : (std::max)(scaleX, scaleY);
+                const double cx = m_picture->GetWidth() * scale;
+                const double cy = m_picture->GetHeight() * scale;
+                const double originX = span ? GetSystemMetrics(SM_XVIRTUALSCREEN) : 0;
+                const double originY = span ? GetSystemMetrics(SM_YVIRTUALSCREEN) : 0;
+                graphics.DrawImage(m_picture.get(), Gdiplus::RectF(
+                    static_cast<Gdiplus::REAL>(bounds.X + (originX + (canvasWidth - cx) / 2) * bounds.Width / screenWidth),
+                    static_cast<Gdiplus::REAL>(bounds.Y + (originY + (canvasHeight - cy) / 2) * bounds.Height / screenHeight),
+                    static_cast<Gdiplus::REAL>(cx * bounds.Width / screenWidth),
+                    static_cast<Gdiplus::REAL>(cy * bounds.Height / screenHeight)));
             }
         }
         graphics.Flush(Gdiplus::FlushIntentionSync);

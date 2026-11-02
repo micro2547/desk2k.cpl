@@ -1,6 +1,7 @@
 #pragma once
 #include "pch.h"
 #include "AppearanceDlgBox.h"
+#include "cscheme.h"
 
 class CAppearanceDlgProc : public WTL::CPropertyPageImpl<CAppearanceDlgProc>
 {
@@ -32,9 +33,9 @@ private:
 	void Modified();
 	CAppearanceDlgBox editor;
 	SCHEMEDATA scheme = {};
-	std::wstring schemeName;
+	AppearanceSchemeName schemeName;
 	std::wstring lastName;
-	std::vector<std::wstring> registryNames;
+	std::vector<AppearanceSchemeName> registryNames;
 	COLORREF appliedDesktopColor = 0;
 	ICONMETRICSW appliedIconMetrics = {sizeof(ICONMETRICSW)};
 	int appliedIconSize = 32;

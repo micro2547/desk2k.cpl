@@ -407,10 +407,15 @@ void CScrSaverDlgProc::Error(UINT id)
 
 LRESULT CScrSaverDlgProc::OnPower(WORD, WORD, HWND, BOOL&)
 {
-	WCHAR system[MAX_PATH] = {}, control[MAX_PATH] = {};
+	WCHAR system[MAX_PATH] = {}, control[MAX_PATH] = {}, applet[MAX_PATH] = {};
 	GetSystemDirectory(system, ARRAYSIZE(system));
 	StringCchPrintf(control, ARRAYSIZE(control), L"%s\\control.exe", system);
+	StringCchPrintf(applet, ARRAYSIZE(applet), L"%s\\xppowerc.cpl", system);
+	DWORD attributes = GetFileAttributes(applet);
+	bool hasApplet = attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY);
+	WCHAR arguments[MAX_PATH + 2] = {};
+	if (hasApplet) StringCchPrintf(arguments, ARRAYSIZE(arguments), L"\"%s\"", applet);
 	if (reinterpret_cast<INT_PTR>(ShellExecute(m_hWnd, L"open", control,
-		L"/name Microsoft.PowerOptions", nullptr, SW_SHOWNORMAL)) <= 32) Error(4255);
+		hasApplet ? arguments : L"/name Microsoft.PowerOptions", nullptr, SW_SHOWNORMAL)) <= 32) Error(4255);
 	return 0;
 }

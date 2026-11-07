@@ -130,8 +130,6 @@ void PropertySheetMoment(HWND owner, LPWSTR lpCmdLine)
 	{
 		DialogFonts dialogFonts;
 		CDisplaySheet sheet(title);
-		sheet.m_psh.dwFlags |= PSH_USEICONID;
-		sheet.m_psh.pszIcon = MAKEINTRESOURCEW(IDI_ICON1);
 		CBackgroundDlgProc background;
 		CScrSaverDlgProc saver;
 		CAppearanceDlgProc appearance;

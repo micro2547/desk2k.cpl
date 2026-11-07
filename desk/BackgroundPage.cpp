@@ -951,6 +951,8 @@ void CBackgroundDlgProc::UpdatePreview()
         monitorWidth = static_cast<int>(monitor.GetWidth() * scale);
         monitorHeight = static_cast<int>(monitor.GetHeight() * scale);
         Gdiplus::Graphics graphics(dc);
+        graphics.SetInterpolationMode(Gdiplus::InterpolationModeNearestNeighbor);
+        graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
         Gdiplus::ImageAttributes attributes;
         attributes.SetColorKey(Gdiplus::Color(255, 255, 255, 0), Gdiplus::Color(255, 255, 255, 0));
         graphics.DrawImage(&monitor, Gdiplus::Rect((width - monitorWidth) / 2, (height - monitorHeight) / 2,

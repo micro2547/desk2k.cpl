@@ -21,7 +21,6 @@
 #define IDB_32BIT						125
 #define IDB_BITMAP1                     126
 #define IDS_DISPLAY_TITLE              4000
-#define IDS_DISPLAY_INITERROR          4001
 #define IDD_WEBDLG                     4100
 #define IDC_EFFECT_ICONS               4101
 #define IDC_EFFECT_CHANGEICON          4102

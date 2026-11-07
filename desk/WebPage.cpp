@@ -65,6 +65,7 @@ LRESULT CWebPage::OnDrawItem(UINT, WPARAM, LPARAM parameter, BOOL& handled)
     int top = draw->rcItem.top + (height - monitorHeight) / 2;
     Gdiplus::Graphics graphics(draw->hDC);
     graphics.SetInterpolationMode(Gdiplus::InterpolationModeNearestNeighbor);
+    graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
     Gdiplus::ImageAttributes attributes;
     attributes.SetColorKey(Gdiplus::Color(255, 255, 255, 0), Gdiplus::Color(255, 255, 255, 0));
     graphics.DrawImage(m_monitor.get(), Gdiplus::Rect(left, top, monitorWidth, monitorHeight),

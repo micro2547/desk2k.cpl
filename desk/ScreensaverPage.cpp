@@ -150,10 +150,11 @@ void CScrSaverDlgProc::CreateMonitor()
 	Gdiplus::ImageAttributes attributes;
 	attributes.SetColorKey(mask, mask);
 	graphics.SetInterpolationMode(Gdiplus::InterpolationModeNearestNeighbor);
+	graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
 	graphics.DrawImage(&monitor, Gdiplus::Rect(x, y, width, height),
 		0, 0, monitor.GetWidth(), monitor.GetHeight(), Gdiplus::UnitPixel, &attributes);
-	_screen = { x + static_cast<LONG>(16 * scale), y + static_cast<LONG>(17 * scale),
-		x + static_cast<LONG>(168 * scale), y + static_cast<LONG>(129 * scale) };
+	_screen = { x + MulDiv(16, width, monitor.GetWidth()), y + MulDiv(17, height, monitor.GetHeight()),
+		x + MulDiv(168, width, monitor.GetWidth()), y + MulDiv(129, height, monitor.GetHeight()) };
 	COLORREF color = GetDeskopColor();
 	Gdiplus::SolidBrush desktop(Gdiplus::Color(255, GetRValue(color), GetGValue(color), GetBValue(color)));
 	graphics.FillRectangle(&desktop, static_cast<int>(_screen.left), static_cast<int>(_screen.top),

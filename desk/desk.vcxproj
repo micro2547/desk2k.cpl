@@ -345,13 +345,19 @@
     <None Include="packages.config" />
     <None Include="Resource.rcconfig" />
   </ItemGroup>
-  <Import Project="$(SolutionDir)MUIBuild\MUIBuild.targets" />
   <PropertyGroup Label="MUI">
     <_PrimaryLanguage>en-US</_PrimaryLanguage>
-    <_PrimaryLanguageID>0x0409</_PrimaryLanguageID>
     <_RCConfig>Resource.rcconfig</_RCConfig>
   </PropertyGroup>
-  <Target Name="MUI" AfterTargets="Link">
+  <Target Name="PreserveUnsplitResources" AfterTargets="Link" BeforeTargets="MUI"
+          Condition="'$(LinkSkippedExecution)' != 'true'">
+    <Copy SourceFiles="$(TargetPath)" DestinationFiles="$(IntDir)$(TargetFileName).unsplit" />
+  </Target>
+  <Target Name="MUI" AfterTargets="Link"
+          Inputs="$(IntDir)$(TargetFileName).unsplit;$(_RCConfig)"
+          Outputs="$(TargetPath);$(OutDir)$(_PrimaryLanguage)\$(TargetFileName).mui">
+    <MakeDir Directories="$(OutDir)$(_PrimaryLanguage)" />
+    <Exec Command="muirct.exe -q &quot;$(_RCConfig)&quot; &quot;$(IntDir)$(TargetFileName).unsplit&quot; &quot;$(TargetPath)&quot; &quot;$(OutDir)$(_PrimaryLanguage)\$(TargetFileName).mui&quot;" />
   </Target>
   <ItemGroup>
     <ResourceCompile Include="Resource.en-US.rc">

@@ -1,12 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
 <localization>
       <resources>
-            <win32Resources fileType="Application">
+            <win32Resources fileType="Application" language="en-US" ultimateFallbackLanguage="en-US">
                   <neutralResources>
+                        <resourceType typeNameId="#16"/>
                   </neutralResources>
                   <localizedResources>
 					    <!-- RT_STRING -->
                         <resourceType typeNameId="#6"/>
                         <resourceType typeNameId="#5"/>
+                        <resourceType typeNameId="#16"/>
                   </localizedResources>
             </win32Resources>
       </resources>

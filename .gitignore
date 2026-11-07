@@ -37,3 +37,21 @@ x86
 desk/x64
 desk/x86
 packages
+
+# Visual Studio/editor outputs
+*.aps
+*.res
+*.cpl
+*.mui
+*.pdb
+*.exp
+*.ipdb
+*.iobj
+*.ilk
+*.tlog
+*.unsplit
+*.vcxproj.user
+artifacts/
+Debug/
+Release/
+Release-Vista/
